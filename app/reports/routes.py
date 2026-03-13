@@ -20,21 +20,31 @@ def reports_get():
 @report.route("/api/reports/<string:file_name>", methods=['GET', 'POST'])
 def report_get(file_name):
     data = request.get_json()
-    report = get_report(file_name)
+    identification = data.get('identification')
 
     if not data:
         return jsonify({
             'error': "identification is needed."
         }), 400
+
+    result = get_student_data(file_name, identification)
     
-    try:
-        identification = data.get('identification')
+    if result:
         return jsonify({
-            'identification': identification,
-            'file': report
-        })
-    except:
-        pass
+            'result': result
+        }), 200
+    
+    return jsonify({
+        'error': "Student not found."
+    }), 404
+
+    # try:
+    #     return jsonify({
+    #         'identification': identification,
+    #         'file': report
+    #     })
+    # except:
+    #     pass
 
 # ✅ UPDATE
 @report.route("/api/reports/<string:file_name>", methods=['PUT'])
