@@ -1,7 +1,6 @@
-from pathlib import Path
-
 import os
 from pathlib import Path
+import re
 from flask import current_app
 from werkzeug.utils import secure_filename
 
@@ -37,9 +36,9 @@ def get_report(file_name, encoding="utf-8"):
         
         with open(file_path, 'r', encoding=encoding) as f:
             for line in f:
-                columns = line.strip().split('REPORTE DE OBJETIVOS LOGRADOS (Acumulados)')
-    except:
-        pass
+                line.strip().split('REPORTE DE OBJETIVOS LOGRADOS (Acumulados)')
+    except Exception:
+        return None
     
 def add_report_to_list(archive):
     if archive:
@@ -50,27 +49,71 @@ def add_report_to_list(archive):
     return False
 
 def delete_report(filename):
-    file_directory = get_path_data / secure_filename(filename)
+    file_directory = get_path_data() / secure_filename(filename)
     if file_directory.exists():
         os.remove(file_directory)
         return True
     return False
 
-import re
+def _extract_cedula(line):
+    match = re.search(r"\b[VEJP]-\d+\b", line)
+    return match.group(0) if match else None
 
-def get_student_data(file_name, target_cedula, encoding="latin-1"):
-    path = get_path_data()
-    file_path = path / file_name
-    
-    student_info = {
-        "cedula": target_cedula,
-        "nombre": None,
-        "carrera": None,
-        "materias": []
+def _matches_cedula(parsed_cedula, target_cedula, mode):
+    if mode == "prefix":
+        return parsed_cedula.startswith(target_cedula)
+    return parsed_cedula == target_cedula
+
+def _build_student_subject(line, current_subject):
+    clean_line = line.replace('|', ' ')
+    parts = clean_line.split()
+    if len(parts) < 4:
+        return None
+
+    carrera = parts[2]
+    start_index = line.find(carrera) + len(carrera)
+    end_index = line.rfind("  ")
+    nombre = line[start_index:end_index].strip() if end_index != -1 else " ".join(parts[3:])
+
+    tot_match = re.search(r"(\d+|No Presento)\s*$", line.strip())
+    nota = tot_match.group(1) if tot_match else "N/A"
+
+    return {
+        "carrera": carrera,
+        "nombre": nombre,
+        "materia": {
+            "asignatura": current_subject,
+            "nota_final": nota,
+        },
     }
 
+def _append_student_match(students_map, line, current_subject, target_cedula, mode):
+    parsed_cedula = _extract_cedula(line)
+    if not parsed_cedula or not _matches_cedula(parsed_cedula, target_cedula, mode):
+        return
+
+    student_row = _build_student_subject(line, current_subject)
+    if not student_row:
+        return
+
+    if parsed_cedula not in students_map:
+        students_map[parsed_cedula] = {
+            "cedula": parsed_cedula,
+            "nombre": student_row["nombre"],
+            "carrera": student_row["carrera"],
+            "materias": [],
+        }
+
+    students_map[parsed_cedula]["materias"].append(student_row["materia"])
+
+def get_student_data(file_name, target_cedula, encoding="latin-1", mode="exact", return_all=False):
+    path = get_path_data()
+    file_path = path / file_name
+
+    students_map = {}
+
     print(f"✅ {target_cedula}")
-    
+
     current_subject = None
 
     try:
@@ -84,43 +127,13 @@ def get_student_data(file_name, target_cedula, encoding="latin-1"):
                     if match_sub:
                         current_subject = match_sub.group(1).strip()
 
-                # 2. Buscar la cédula del estudiante en la línea actual
-                # Usamos el target_cedula (ej: V-13149341)
-                if target_cedula in line:
-                    print(f"✅ {line}")
+                _append_student_match(students_map, line, current_subject, target_cedula, mode)
 
-                    # El formato del reporte es de ancho fijo. 
-                    # Según el snippet: N°(5), CEDULA(13), CARRERA(8), NOMBRE(30)... y al final TOT.
-                    
-                    # Limpiamos la línea de los caracteres de tabla '|'
-                    clean_line = line.replace('|', ' ')
-                    parts = clean_line.split()
-                    
-                    # Si la línea tiene suficientes partes (Nro, Cedula, Carrera, Nombre...)
-                    if len(parts) >= 4:
-                        # Guardamos datos básicos si no los tenemos
-                        if not student_info["nombre"]:
-                            # El nombre suele estar después de la carrera (índice 2)
-                            # Intentamos capturar el nombre completo reconstruyendo los strings
-                            student_info["carrera"] = parts[2]
-                            # El nombre está entre la carrera y los resultados numéricos
-                            # Buscamos la posición de la carrera y tomamos lo que sigue
-                            start_index = line.find(parts[2]) + len(parts[2])
-                            end_index = line.rfind("  ") # Donde empiezan los espacios antes de las notas
-                            student_info["nombre"] = line[start_index:end_index].strip()
+        if return_all:
+            return list(students_map.values())
 
-                        # 3. Extraer la nota final (TOT.)
-                        # Es el último valor numérico de la línea
-                        tot_match = re.search(r"(\d+|No Presento)\s*$", line.strip())
-                        nota = tot_match.group(1) if tot_match else "N/A"
-
-                        student_info["materias"].append({
-                            "asignatura": current_subject,
-                            "nota_final": nota
-                        })
-
-        return student_info if student_info["nombre"] else None
+        return students_map.get(target_cedula)
 
     except Exception as e:
         print(f"❌ Error procesando el archivo: {e}")
-        return None
+        return [] if return_all else None
