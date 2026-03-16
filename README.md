@@ -72,52 +72,98 @@ La API inicia en:
 
 - `http://127.0.0.1:5000`
 
-## Endpoints principales
+## Endpoints API
 
-### GET /api/reports
+Base URL:
+
+- `http://127.0.0.1:5000`
+
+### 1) GET /api/reports
 
 Lista los archivos disponibles en `data/`.
 
-Ejemplo:
-
 ```bash
-curl http://127.0.0.1:5000/api/reports
+curl "http://127.0.0.1:5000/api/reports"
 ```
 
-### GET /api/reports/{file_name}
+### 2) GET /api/reports/{file_name}
 
-Busca un estudiante en un archivo de reporte.
+Busca estudiante por cedula dentro del archivo.
 
-Nota: en la implementacion actual este endpoint espera JSON en el body con `identification`.
+Parametros:
 
-Ejemplo:
+- `identification` (requerido): cedula a buscar.
+- `mode` (opcional): `exact` (default) o `prefix`.
+
+Ejemplo exacto (recomendado):
 
 ```bash
-curl -X GET "http://127.0.0.1:5000/api/reports/LISEVAL3.REP" \
+curl "http://127.0.0.1:5000/api/reports/LISEVAL3.REP?identification=V-31859916"
+```
+
+Ejemplo prefix (devuelve multiples coincidencias):
+
+```bash
+curl "http://127.0.0.1:5000/api/reports/LISEVAL3.REP?identification=V-31859&mode=prefix"
+```
+
+Errores comunes:
+
+```bash
+# identification faltante -> 400
+curl "http://127.0.0.1:5000/api/reports/LISEVAL3.REP"
+
+# mode invalido -> 400
+curl "http://127.0.0.1:5000/api/reports/LISEVAL3.REP?identification=V-31859&mode=foo"
+```
+
+### 3) POST /api/reports/{file_name}
+
+Misma logica que el GET anterior, pero enviando los datos en JSON body.
+
+Ejemplo exacto (body JSON):
+
+```bash
+curl -X POST "http://127.0.0.1:5000/api/reports/LISEVAL3.REP" \
   -H "Content-Type: application/json" \
-  -d '{"identification":"V-13149341"}'
+  -d '{"identification":"V-31859916"}'
 ```
 
-Respuesta esperada (referencial):
+Ejemplo prefix (body JSON):
 
-```json
-{
-  "result": {
-    "cedula": "V-13149341",
-    "nombre": "NOMBRE APELLIDO",
-    "carrera": "XX",
-    "materias": [
-      {
-        "asignatura": "MATERIA",
-        "nota_final": "15"
-      }
-    ]
-  }
-}
+```bash
+curl -X POST "http://127.0.0.1:5000/api/reports/LISEVAL3.REP" \
+  -H "Content-Type: application/json" \
+  -d '{"identification":"V-31859","mode":"prefix"}'
+```
+
+### 4) POST /api/reports
+
+Endpoint placeholder de demo (pendiente por implementar).
+
+```bash
+curl -X POST "http://127.0.0.1:5000/api/reports"
+```
+
+### 5) PUT /api/reports/{file_name}
+
+Endpoint no implementado en esta demo (retorna `501`).
+
+```bash
+curl -X PUT "http://127.0.0.1:5000/api/reports/LISEVAL3.REP"
+```
+
+### 6) DELETE /api/reports/{file_name}
+
+Endpoint placeholder de demo.
+
+```bash
+curl -X DELETE "http://127.0.0.1:5000/api/reports/LISEVAL3.REP"
 ```
 
 ## Notas para demo
 
 - El parser depende del formato actual de los archivos REP/TXT.
 - Se recomienda usar archivos de prueba en `data/` para la validacion funcional.
+- Para consultas productivas de demo, usar `mode=exact`; `mode=prefix` sirve para exploracion.
 - Esta version prioriza velocidad de demostracion sobre endurecimiento productivo.

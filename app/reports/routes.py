@@ -3,12 +3,12 @@ from app.reports import reports_bp as report
 
 from app.utils import get_reports_list, get_student_data
 
-# ✅ CREATE
+# CREATE
 @report.route("/api/reports", methods=['POST'])
 def report_add():
     return "ADD REPORT"
 
-# ✅ READ
+# READ
 @report.route("/api/reports", methods=['GET'])
 def reports_get():
     report_list = get_reports_list()
@@ -56,22 +56,15 @@ def report_get(file_name):
         'mode': mode
     }), 404
 
-    # try:
-    #     return jsonify({
-    #         'identification': identification,
-    #         'file': report
-    #     })
-    # except:
-    #     pass
 
-# ✅ UPDATE
+# UPDATE
 @report.route("/api/reports/<string:file_name>", methods=['PUT'])
 def report_update(file_name):
     return jsonify({
         'error': 'Not implemented in this demo.'
     }), 501
 
-# ✅ DELETE
+# DELETE
 @report.route("/api/reports/<string:file_name>", methods=['DELETE'])
 def report_delete(file_name):
     return "DEL REPORT"
