@@ -4,11 +4,21 @@ import re
 from flask import current_app
 from werkzeug.utils import secure_filename
 
+###
+#
+#   🧩  get the path of folder where are the reports files
+#
+###
 def get_path_data():
     directory = Path(current_app.root_path) / '../data'
     directory.mkdir(parents=True, exist_ok=True)
     return directory
 
+###
+#
+#   🧩  get the report files list avalibles
+#
+###
 def get_reports_list():
     try:
         directory = get_path_data()
@@ -22,7 +32,12 @@ def get_reports_list():
     except Exception as e:
         print(f"✅ Error: {e}")
         return ['Nothing']
-    
+
+###
+#
+#   🧩  read and return the filter data by student identification number
+#
+###
 def get_report(file_name, encoding="utf-8"):
     path = get_path_data()
     file_path = path / file_name
@@ -40,6 +55,11 @@ def get_report(file_name, encoding="utf-8"):
     except Exception:
         return None
     
+###
+#
+#   🧩  save a new report file to read
+#
+###
 def add_report_to_list(archive):
     if archive:
         secure_name = secure_filename(archive.filename)
@@ -48,6 +68,11 @@ def add_report_to_list(archive):
         return True
     return False
 
+###
+#
+#   🧩  delete a report file
+#
+###
 def delete_report(filename):
     file_directory = get_path_data() / secure_filename(filename)
     if file_directory.exists():
