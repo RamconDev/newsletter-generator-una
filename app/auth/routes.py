@@ -18,11 +18,11 @@ from .models.rol import Role
 def login():
     return "Login Authentication Test"
 
-##
+###
 #
-# ✅ Create new user
+# ✅ CREATE NEW USER
 #
-##
+###
 @auth.route("/api/v1/auth/user", methods=['POST'])
 def user_create():
     data = request.get_json()
@@ -66,11 +66,11 @@ def user_create():
             'details': str(e)
         })
    
-##
+###
 #
-# ✅ Get all users
+# ✅ GET ALL USERS
 #
-## 
+### 
 @auth.route("/api/v1/auth/user", methods=['GET'])
 def user_get():
     users_list = db.session.execute(
@@ -83,11 +83,11 @@ def user_get():
         'data': results
     })
    
-##
+###
 #
-# ✅ Get user
+# ✅ GET USER BY ID
 #
-##
+###
 
 @auth.route("/api/v1/auth/user/<int:user_id>", methods=['GET'])
 def user_get_id(user_id):
@@ -102,11 +102,11 @@ def user_get_id(user_id):
         'data': user.to_dict()
     })
 
-##
+###
 #
-# ✅ Update user
+# ✅ UPDATE USER
 #
-##
+###
 @auth.route("/api/v1/auth/user/<int:user_id>", methods=['PUT'])
 def user_update(user_id):
     user = db.session.get(User, user_id)
@@ -132,11 +132,11 @@ def user_update(user_id):
         }), 400
 
 
-##
+###
 #
-# ✅ Remove user
+# ✅ REMOVE USER
 #
-##
+###
 @auth.route("/api/v1/auth/user/<int:user_id>", methods=['DELETE'])
 def user_delete(user_id):
     user = db.session.get(User, user_id)
@@ -171,11 +171,11 @@ def user_delete(user_id):
             'details': str(e)
         }), 400
 
-##
+###
 #
-# ✅ Assing role
+# ✅ ASSING ROLE
 #
-##
+###
 @auth.route("/api/v1/auth/user/<int:user_id>/role", methods=['POST'])
 def user_assign_role(user_id):
     data = request.get_json()
@@ -206,11 +206,11 @@ def user_assign_role(user_id):
         db.session.rollback()
         return jsonify({'error': 'database error', 'details': str(e)}), 400
 
-##
+###
 #
-# ✅ Remove role
+# ✅ REMOVE ROLE
 #
-##
+###
 @auth.route("/api/v1/auth/user/<int:user_id>/role/<string:role_name>", methods=['DELETE'])
 def user_remove_role(user_id, role_name):
     user = db.session.get(User, user_id)

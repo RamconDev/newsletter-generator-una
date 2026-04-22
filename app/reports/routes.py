@@ -1,22 +1,89 @@
-from flask import jsonify, request
+from flask import request, jsonify, current_app
 from app.reports import reports_bp as report
+import os
 
 from app.utils import get_reports_list, get_student_data
+from werkzeug.utils import secure_filename
 
-# CREATE
-@report.route("/api/reports", methods=['POST'])
+ALLOWED_EXTENSIONS = {'rep'}
+MAX_FILE_SIZE = 5 * 1024 * 1024
+
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+###
+#
+# ✅ ADD NEW REPORT
+#
+###
+@report.route("/api/v1/reports", methods=['POST'])
 def report_add():
-    return "ADD REPORT"
+    # 1. Verify if the file is sended
+    if 'file' not in request.files:
+        return jsonify({'status': 'error', 'message': 'No se envió ningun archivo.'}), 400
+    
+    file = request.files['file']
+    
+    if file.filename == '':
+        return jsonify({'status': 'error', 'message': 'Archivo no seleccionado.'}), 400
+    
+    # 2. Verify if the file extension is valid
+    if not allowed_file(file.filename):
+        return jsonify({'status': 'error', 'message': 'Formato no permitido. Solo se permiten archivos .rep'}), 400
 
-# READ
-@report.route("/api/reports", methods=['GET'])
+    file.seek(0, os.SEEK_END) # Go to end archive
+    file_length = file.tell() # Get size archive
+    file.seek(0,0) # Back to start archive
+
+    if file_length > MAX_FILE_SIZE:
+        return jsonify({'status': 'error', 'message': 'El archivo excede el tamaño máximo permitido.'}), 400
+
+    # 4. Verify if the file is a valid report
+    try:
+        cabecera = file.read(256).decode('latin-1')
+        file.seek(0, 0)
+        if "UNIVERSIDAD NACIONAL ABIERTA" not in cabecera:
+            return jsonify({'status': 'error', 'message': 'El archivo no es un archivo de reporte valido.'}), 400
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': 'El archivo parece estar dañado o no es texto plano.'}), 400
+
+    # 5. Save the file
+    try:
+        filename = secure_filename(file.filename)
+        save_path = os.path.join(current_app.config['UPLOAD_FOLDER'], filename)
+        file.save(save_path)
+
+        # DB BACKEND LOGIC
+
+        return jsonify({
+            'status': 'success',
+            'message': 'Archivo cargado y validado correctamente.',
+            'filename': filename
+            }), 200
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': f'Error al guardar el archivo: {str(e)}'
+            }), 500
+
+###
+#
+# ✅ READ
+#
+###
+@report.route("/api/v1/reports", methods=['GET'])
 def reports_get():
     report_list = get_reports_list()
     return jsonify({
         'name_files': report_list
     })
 
-@report.route("/api/reports/<string:file_name>", methods=['GET', 'POST'])
+###
+#
+# ✅ GET REPORT BY NAME
+#
+###
+@report.route("/api/v1/reports/<string:file_name>", methods=['GET', 'POST'])
 def report_get(file_name):
     data = request.get_json(silent=True) or {}
     identification = data.get('identification') or request.args.get('identification')
