@@ -54,7 +54,6 @@ def report_add():
         file.save(save_path)
 
         # DB BACKEND LOGIC
-
         return jsonify({
             'status': 'success',
             'message': 'Archivo cargado y validado correctamente.',
