@@ -1,2 +1,3 @@
-from . import user
-from . import rol
+from .user import User
+from .role import Role
+from .roles_users import roles_users

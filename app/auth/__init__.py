@@ -1,6 +1,7 @@
-from .models.rol import Role
+from .models.role import Role
 from .models.user import User
 from .models.roles_users import roles_users
+
 from app import db
 
 from flask import Blueprint

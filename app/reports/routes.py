@@ -5,11 +5,8 @@ import os
 from app.utils import get_reports_list, get_student_data
 from werkzeug.utils import secure_filename
 
-ALLOWED_EXTENSIONS = {'rep'}
-MAX_FILE_SIZE = 5 * 1024 * 1024
-
 def allowed_file(filename):
-    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in current_app.config['ALLOWED_EXTENSIONS']
 
 ###
 #
@@ -35,7 +32,7 @@ def report_add():
     file_length = file.tell() # Get size archive
     file.seek(0,0) # Back to start archive
 
-    if file_length > MAX_FILE_SIZE:
+    if file_length > current_app.config['MAX_FILE_SIZE']:
         return jsonify({'status': 'error', 'message': 'El archivo excede el tamaño máximo permitido.'}), 400
 
     # 4. Verify if the file is a valid report
@@ -54,11 +51,22 @@ def report_add():
         file.save(save_path)
 
         # DB BACKEND LOGIC
+
+        from app.utils import process_and_save_report
+        exito = process_and_save_report(filename)
+
+        if not exito:
+            return jsonify({
+                'status': 'error',
+                'message': 'Error al guardar el archivo en la base de datos.'
+                }), 500
+
         return jsonify({
             'status': 'success',
-            'message': 'Archivo cargado y validado correctamente.',
+            'message': 'Archivo cargado, validado y guardado correctamente.',
             'filename': filename
             }), 200
+            
     except Exception as e:
         return jsonify({
             'status': 'error',
@@ -79,7 +87,7 @@ def reports_get():
 
 ###
 #
-# ✅ GET REPORT BY NAME
+# ✅ GET REPORT OF STUDENT BY IDENTIFICATION
 #
 ###
 @report.route("/api/v1/reports/<string:file_name>", methods=['GET', 'POST'])

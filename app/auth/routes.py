@@ -8,10 +8,10 @@ from app.auth import auth_bp as auth
 from sqlalchemy.exc import SQLAlchemyError
 
 from .models.user import User
-from .models.rol import Role
+from .models.role import Role
 ##
 #
-# ✅
+#
 #
 ##
 @auth.route("/auth")
@@ -52,19 +52,19 @@ def user_create():
         return jsonify({
             'message': 'registered successfully',
             'data': new_user.to_dict()
-        })
+        }), 200
     except SQLAlchemyError as e:
         db.session.rollback()
         return jsonify({
             'error': 'database error',
             'details': str(e)
-        })
+        }), 400
     except Exception as e:
         db.session.rollback()
         return jsonify({
             'error': 'exception error',
             'details': str(e)
-        })
+        }), 400
    
 ###
 #
@@ -79,9 +79,17 @@ def user_get():
 
     results = [user.to_dict() for user in users_list]
 
+    if not results:
+        return jsonify({
+            'status': 'error',
+            'message': 'No se encontraron usuarios registrados.'
+        }), 404
+
     return jsonify({
+        'status': 'success',
+        'message': 'Usuarios obtenidos correctamente.',
         'data': results
-    })
+    }), 200
    
 ###
 #
@@ -95,12 +103,15 @@ def user_get_id(user_id):
 
     if not user:
         return jsonify({
-            'error': f"user id {user_id} doesn't exists."
+            'status': 'error',
+            'message': f"usuario id {user_id} no existe."
         }), 404
 
     return jsonify({
+        'status': 'success',
+        'message': 'Usuario obtenido correctamente.',
         'data': user.to_dict()
-    })
+    }), 200
 
 ###
 #
@@ -113,7 +124,8 @@ def user_update(user_id):
 
     if not user:
         return jsonify({
-            'error': f"user id {user_id} doesn't exists."
+            'status': 'error',
+            'message': f"usuario id {user_id} no existe."
         }), 404
     
     try:
@@ -121,13 +133,15 @@ def user_update(user_id):
     except SQLAlchemyError as e:
         db.session.rollback()
         return jsonify({
-            'error': 'database error',
+            'status': 'error',
+            'message': 'Error de base de datos.',
             'details': str(e)
         }), 400
     except Exception as e:
         db.session.rollback()
         return jsonify({
-            'error': 'exception error',
+            'status': 'error',
+            'message': 'Error inesperado.',
             'details': str(e)
         }), 400
 
@@ -143,7 +157,8 @@ def user_delete(user_id):
 
     if not user:
         return jsonify({
-            'error': f"user id {user_id} doesn't exists."
+            'status': 'error',
+            'message': f"usuario id {user_id} no existe."
         }), 404
     
     try:
@@ -152,7 +167,8 @@ def user_delete(user_id):
         db.session.commit()
         
         return jsonify({
-            'message': 'user has been deleted successfully.',
+            'status': 'success',
+            'message': 'Usuario eliminado correctamente.',
             'data': {
                'id': user_id,
                'username': username
@@ -161,13 +177,15 @@ def user_delete(user_id):
     except SQLAlchemyError as e:
         db.session.rollback()
         return jsonify({
-            'error': 'data base error',
+            'status': 'error',
+            'message': 'Error de base de datos.',
             'details': str(e)
         }), 400
     except Exception as e:
         db.session.rollback()
         return jsonify({
-            'error': 'data base error',
+            'status': 'error',
+            'message': 'Error inesperado.',
             'details': str(e)
         }), 400
 
@@ -180,31 +198,48 @@ def user_delete(user_id):
 def user_assign_role(user_id):
     data = request.get_json()
     if not data or not data.get('role'):
-        return jsonify({'error': 'role is required'}), 400
+        return jsonify({
+            'status': 'error',
+            'message': 'El rol es requerido.'
+        }), 400
 
     user = db.session.get(User, user_id)
     if not user:
-        return jsonify({'error': f"user id {user_id} doesn't exist."}), 404
+        return jsonify({
+            'status': 'error',
+            'message': f"usuario id {user_id} no existe."
+        }), 404
 
     role_name = data.get('role')
     role = Role.query.filter_by(name=role_name).first()
 
     if not role:
-        return jsonify({'error': f"role '{role_name}' doesn't exist."}), 404
+        return jsonify({
+            'status': 'error',
+            'message': f"Rol '{role_name}' no existe."
+        }), 404
 
     if user.has_role(role_name):
-        return jsonify({'message': f"user already has role '{role_name}'"}), 200
+        return jsonify({
+            'status': 'error',
+            'message': f"El usuario ya tiene el rol '{role_name}'."
+        }), 200
 
     try:
         user.add_role(role)
         db.session.commit()
         return jsonify({
-            'message': 'role assigned successfully',
+            'status': 'success',
+            'message': 'Rol asignado correctamente.',
             'data': user.to_dict()
         }), 200
     except SQLAlchemyError as e:
         db.session.rollback()
-        return jsonify({'error': 'database error', 'details': str(e)}), 400
+        return jsonify({
+            'status': 'error',
+            'message': 'Error de base de datos.',
+            'details': str(e)
+        }), 400
 
 ###
 #
@@ -215,22 +250,36 @@ def user_assign_role(user_id):
 def user_remove_role(user_id, role_name):
     user = db.session.get(User, user_id)
     if not user:
-        return jsonify({'error': f"user id {user_id} doesn't exist."}), 404
+        return jsonify({
+            'status': 'error',
+            'message': f"usuario id {user_id} no existe."
+        }), 404
 
     role = Role.query.filter_by(name=role_name).first()
     if not role:
-        return jsonify({'error': f"role '{role_name}' doesn't exist."}), 404
+        return jsonify({
+            'status': 'error',
+            'message': f"Rol '{role_name}' no existe."
+        }), 404
 
     if not user.has_role(role_name):
-        return jsonify({'message': f"user doesn't have role '{role_name}'"}), 200
+        return jsonify({
+            'status': 'error',
+            'message': f"El usuario no tiene el rol '{role_name}'."
+        }), 200
 
     try:
         user.roles.remove(role)
         db.session.commit()
         return jsonify({
-            'message': 'role removed successfully',
+            'status': 'success',
+            'message': 'Rol eliminado correctamente.',
             'data': user.to_dict()
         }), 200
     except SQLAlchemyError as e:
         db.session.rollback()
-        return jsonify({'error': 'database error', 'details': str(e)}), 400
+        return jsonify({
+            'status': 'error',
+            'message': 'Error de base de datos.',
+            'details': str(e)
+        }), 400
