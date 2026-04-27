@@ -5,7 +5,7 @@ from flask import current_app
 from werkzeug.utils import secure_filename
 
 from app import db
-from app.models import Subject, Major, Student, Grade
+from app.models import Subject, Major, Student, Grade, AcademicPeriod
 
 ###
 #
@@ -83,95 +83,13 @@ def delete_report(filename):
         return True
     return False
 
-def _extract_cedula(line):
-    match = re.search(r"\b[VEJP]-\d+\b", line)
-    return match.group(0) if match else None
-
-def _matches_cedula(parsed_cedula, target_cedula, mode):
-    if mode == "prefix":
-        return parsed_cedula.startswith(target_cedula)
-    return parsed_cedula == target_cedula
-
-def _build_student_subject(line, current_subject):
-    clean_line = line.replace('|', ' ')
-    parts = clean_line.split()
-    if len(parts) < 4:
-        return None
-
-    carrera = parts[2]
-    start_index = line.find(carrera) + len(carrera)
-    end_index = line.rfind("  ")
-    nombre = line[start_index:end_index].strip() if end_index != -1 else " ".join(parts[3:])
-
-    tot_match = re.search(r"(\d+|No Presento)\s*$", line.strip())
-    nota = tot_match.group(1) if tot_match else "N/A"
-
-    return {
-        "carrera": carrera,
-        "nombre": nombre,
-        "materia": {
-            "asignatura": current_subject,
-            "nota_final": nota,
-        },
-    }
-
-def _append_student_match(students_map, line, current_subject, target_cedula, mode):
-    parsed_cedula = _extract_cedula(line)
-    if not parsed_cedula or not _matches_cedula(parsed_cedula, target_cedula, mode):
-        return
-
-    student_row = _build_student_subject(line, current_subject)
-    if not student_row:
-        return
-
-    if parsed_cedula not in students_map:
-        students_map[parsed_cedula] = {
-            "cedula": parsed_cedula,
-            "nombre": student_row["nombre"],
-            "carrera": student_row["carrera"],
-            "materias": [],
-        }
-
-    students_map[parsed_cedula]["materias"].append(student_row["materia"])
-
-def get_student_data(file_name, target_cedula, encoding="latin-1", mode="exact", return_all=False):
-    path = get_path_data()
-    file_path = path / file_name
-
-    students_map = {}
-
-    print(f"✅ {target_cedula}")
-
-    current_subject = None
-
-    try:
-        with open(file_path, 'r', encoding=encoding) as f:
-            print(f"✅ {file_path}")
-            for line in f:
-                # 1. Detectar la Asignatura (está en una línea que contiene 'ASIGNATURA:')
-                if "ASIGNATURA:" in line:
-                    # Extraemos lo que esté entre 'ASIGNATURA:' y el siguiente '|'
-                    match_sub = re.search(r"ASIGNATURA:\s*(.*?)\s*\|", line)
-                    if match_sub:
-                        current_subject = match_sub.group(1).strip()
-
-                _append_student_match(students_map, line, current_subject, target_cedula, mode)
-
-        if return_all:
-            return list(students_map.values())
-
-        return students_map.get(target_cedula)
-
-    except Exception as e:
-        print(f"❌ Error procesando el archivo: {e}")
-        return [] if return_all else None
-
 def process_and_save_report(file_name, encoding='latin-1'):
     path = get_path_data()
     file_path = path / file_name
 
     current_subject = None
-    max_objetives = 0 
+    current_academic_period = None
+    max_objectives = 0 
     
     try:
         with open(file_path, 'r', encoding=encoding) as f:
@@ -189,6 +107,18 @@ def process_and_save_report(file_name, encoding='latin-1'):
                         if not current_subject:
                             current_subject = Subject(code=codigo_materia, name=nombre_materia)
                             db.session.add(current_subject)
+                            db.session.commit()
+                        continue
+                
+                # Buscar Periodo
+                if "PERIODO" in line:
+                    match_period = re.search(r'PERIODO\s*:\s*([\w\-]+)', line)
+                    if match_period:
+                        period_code = match_period.group(1).strip()
+                        current_academic_period = AcademicPeriod.query.filter_by(code=period_code).first()
+                        if not current_academic_period:
+                            current_academic_period = AcademicPeriod(code=period_code)
+                            db.session.add(current_academic_period)
                             db.session.commit()
                         continue
                 
@@ -263,7 +193,8 @@ def process_and_save_report(file_name, encoding='latin-1'):
                         # Verificamos si ya existe esta nota para no duplicarla si suben el archivo 2 veces
                         grade = Grade.query.filter_by(
                             student_id=student.id, 
-                            subject_id=current_subject.id
+                            subject_id=current_subject.id,
+                            academic_period_id=current_academic_period.id if current_academic_period else None
                         ).first()
                         
                         if not grade:
@@ -271,7 +202,8 @@ def process_and_save_report(file_name, encoding='latin-1'):
                                 final_score=nota_final,
                                 condition=condicion,
                                 student_id=student.id,
-                                subject_id=current_subject.id
+                                subject_id=current_subject.id,
+                                academic_period_id=current_academic_period.id if current_academic_period else None
                             )
                             db.session.add(grade)
                         else:
@@ -289,32 +221,63 @@ def process_and_save_report(file_name, encoding='latin-1'):
         print(f"❌ Error procesando el archivo para la BD: {e}")
         return False
 
-def get_student_data_from_db(target_cedula):
-    """
-    Busca al estudiante en la Base de Datos usando SQLAlchemy 
-    y devuelve el JSON estructurado para el Frontend.
-    """
-    # 1. Buscamos al estudiante
-    student = Student.query.filter_by(identification=target_cedula).first()
-    
-    if not student:
-        return None
-        
+def _format_student_data(student):
     # 2. Armamos la respuesta
     resultado = {
         "cedula": student.identification,
         "nombre": student.full_name,
         "carrera": student.major.code,
-        "materias": []
+        "periodos": []
     }
     
-    # 3. Iteramos sus notas (gracias a la relación que creamos en los modelos)
+    # 3. Agrupamos las notas por Periodo Académico
+    periodos_dict = {}
     for grade in student.grades:
-        resultado["materias"].append({
+        period_code = grade.academic_period.code if grade.academic_period else "Desconocido"
+        period_id = grade.academic_period.id if grade.academic_period else None
+                
+        if period_code not in periodos_dict:
+            periodos_dict[period_code] = {
+                "id": period_id,
+                "materias": []
+            }
+            
+        periodos_dict[period_code]["materias"].append({
             "codigo_asignatura": grade.subject.code,
             "asignatura": grade.subject.name,
             "condicion": grade.condition,
-            "nota_final": grade.final_score # Aquí ya viene formateado como "6/6"
+            "nota_final": grade.final_score
+        })
+        
+    for period_code, val in periodos_dict.items():
+        resultado["periodos"].append({
+            "id": val["id"],
+            "codigo": period_code,
+            "materias": val["materias"]
         })
         
     return resultado
+
+def get_student_data_from_db(target_cedula, mode="exact"):
+    """
+    Busca al estudiante en la Base de Datos usando SQLAlchemy 
+    y devuelve el JSON estructurado para el Frontend.
+    """
+    if mode == "prefix":
+        students = Student.query.filter(Student.identification.like(f"{target_cedula}%")).all()
+        if not students:
+            return None
+        return [_format_student_data(student) for student in students]
+    else:
+        student = Student.query.filter_by(identification=target_cedula).first()
+        if not student:
+            return None
+        return _format_student_data(student)
+
+def get_all_academic_periods():
+    """
+    Retorna una lista de diccionarios con todos los periodos 
+    académicos registrados en la Base de Datos, incluyendo su ID y Código.
+    """
+    periods = AcademicPeriod.query.all()
+    return [{"id": p.id, "code": p.code} for p in periods]

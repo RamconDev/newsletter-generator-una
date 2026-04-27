@@ -2,7 +2,7 @@ from flask import request, jsonify, current_app
 from app.reports import reports_bp as report
 import os
 
-from app.utils import get_reports_list, get_student_data
+from app.utils import get_reports_list, get_student_data_from_db
 from werkzeug.utils import secure_filename
 
 def allowed_file(filename):
@@ -51,7 +51,6 @@ def report_add():
         file.save(save_path)
 
         # DB BACKEND LOGIC
-
         from app.utils import process_and_save_report
         exito = process_and_save_report(filename)
 
@@ -75,7 +74,7 @@ def report_add():
 
 ###
 #
-# ✅ READ
+# ⚠️⚠️⚠️ READ
 #
 ###
 @report.route("/api/v1/reports", methods=['GET'])
@@ -87,58 +86,103 @@ def reports_get():
 
 ###
 #
-# ✅ GET REPORT OF STUDENT BY IDENTIFICATION
+# ⚠️⚠️⚠️ GET REPORT OF STUDENT BY IDENTIFICATION
 #
 ###
-@report.route("/api/v1/reports/<string:file_name>", methods=['GET', 'POST'])
-def report_get(file_name):
-    data = request.get_json(silent=True) or {}
-    identification = data.get('identification') or request.args.get('identification')
-    mode = (data.get('mode') or request.args.get('mode') or 'exact').strip().lower()
+# @report.route("/api/v1/reports/<string:file_name>", methods=['GET', 'POST'])
+# def report_get(file_name):
+#     data = request.get_json(silent=True) or {}
+#     identification = data.get('identification') or request.args.get('identification')
+#     mode = (data.get('mode') or request.args.get('mode') or 'exact').strip().lower()
 
-    if not identification:
+#     if not identification:
+#         return jsonify({
+#             'error': "identification is needed."
+#         }), 400
+
+#     if mode not in {'exact', 'prefix'}:
+#         return jsonify({
+#             'error': "Invalid mode. Use 'exact' or 'prefix'."
+#         }), 400
+
+#     is_prefix_mode = mode == 'prefix'
+#     result = get_student_data_from_db(
+#         identification,
+#         mode=mode
+#     )
+
+#     if result:
+#         if is_prefix_mode:
+#             return jsonify({
+#                 'results': result,
+#                 'count': len(result)
+#             }), 200
+
+#         return jsonify({
+#             'result': result
+#         }), 200
+    
+#     return jsonify({
+#         'error': "Student not found.",
+#         'mode': mode
+#     }), 404
+
+
+# ⚠️⚠️⚠️ UPDATE
+# @report.route("/api/reports/<string:file_name>", methods=['PUT'])
+# def report_update(file_name):
+#     return jsonify({
+#         'error': 'Not implemented in this demo.'
+#     }), 501
+
+#  ⚠️⚠️⚠️ DELETE
+# @report.route("/api/reports/<string:file_name>", methods=['DELETE'])
+# def report_delete(file_name):
+#     return "DEL REPORT"
+
+###
+#
+# ✅ ALL ACADEMIC PERIODS LIST [Home Dashboard]
+#
+###
+@report.route("/api/v1/academic-periods", methods=['GET'])
+def academic_periods_get():
+    # Import inside the function or file level, we can import from app.utils
+    from app.utils import get_all_academic_periods
+    
+    try:
+        academic_periods = get_all_academic_periods()
         return jsonify({
-            'error': "identification is needed."
-        }), 400
-
-    if mode not in {'exact', 'prefix'}:
-        return jsonify({
-            'error': "Invalid mode. Use 'exact' or 'prefix'."
-        }), 400
-
-    is_prefix_mode = mode == 'prefix'
-    result = get_student_data(
-        file_name,
-        identification,
-        mode=mode,
-        return_all=is_prefix_mode
-    )
-
-    if result:
-        if is_prefix_mode:
-            return jsonify({
-                'results': result,
-                'count': len(result)
-            }), 200
-
-        return jsonify({
-            'result': result
+            'status': 'success',
+            'message': 'Academic periods list.',
+            'data': {
+                'academic_periods': academic_periods
+            }
         }), 200
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': f'Error al obtener los periodos académicos: {str(e)}'
+        }), 500
+
+###
+#
+# ✅ STUDENT SEARCH BY IDENTIFICATION [Home Dashboard]
+#
+###
+@report.route("/api/v1/students/<string:identification>", methods=['GET'])
+def student_search(identification):
+    result = get_student_data_from_db(identification)
+    
+    if result:
+        return jsonify(
+            {
+                'status': 'success',
+                'message': 'Student found.',
+                'data': result
+            }), 200
     
     return jsonify({
-        'error': "Student not found.",
-        'mode': mode
+        'status': 'error',
+        'message': 'Student not found.'
     }), 404
-
-
-# UPDATE
-@report.route("/api/reports/<string:file_name>", methods=['PUT'])
-def report_update(file_name):
-    return jsonify({
-        'error': 'Not implemented in this demo.'
-    }), 501
-
-# DELETE
-@report.route("/api/reports/<string:file_name>", methods=['DELETE'])
-def report_delete(file_name):
-    return "DEL REPORT"

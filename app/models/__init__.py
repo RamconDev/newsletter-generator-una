@@ -76,6 +76,26 @@ class Subject(db.Model):
 
 ###
 #
+# ✅ ACADEMIC PERIOD # Periodo Academico
+#
+###
+class AcademicPeriod(db.Model):
+    __tablename__ = 'academic_periods'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    code = db.Column(db.String(20), unique=True, nullable=False)
+    
+    def __str__(self):
+        return f"Academic Period: {self.code}"
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'code': self.code
+        }
+
+###
+#
 # ✅ GRADE # Nota
 #
 ###
@@ -89,9 +109,11 @@ class Grade(db.Model):
     # Foreign keys linking to the specific student and subject
     student_id = db.Column(db.Integer, db.ForeignKey('students.id'), nullable=False)
     subject_id = db.Column(db.Integer, db.ForeignKey('subjects.id'), nullable=False)
+    academic_period_id = db.Column(db.Integer, db.ForeignKey('academic_periods.id'), nullable=True)
     
-    # Relationship for easy access to the subject details from a grade instance
+    # Relationship for easy access to the subject and academic period
     subject = db.relationship('Subject')
+    academic_period = db.relationship('AcademicPeriod')
 
     def __str__(self):
         return f"Grade: {self.final_score}, Condition: {self.condition}"
@@ -102,5 +124,6 @@ class Grade(db.Model):
             'final_score': self.final_score,
             'condition': self.condition,
             'student_id': self.student_id,
-            'subject_id': self.subject_id
+            'subject_id': self.subject_id,
+            'academic_period_id': self.academic_period_id
         }
