@@ -2,7 +2,7 @@ from flask import request, jsonify
 from datetime import datetime
 from sqlalchemy.exc import SQLAlchemyError
 
-from app import db
+from app.extensions import db
 from app.auth import auth_bp as auth
 
 from sqlalchemy.exc import SQLAlchemyError
