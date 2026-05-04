@@ -2,7 +2,12 @@ from flask import request, jsonify, current_app
 from app.reports import reports_bp as report
 import os
 
-from app.utils import get_reports_list, get_student_data_from_db
+from app.reports.services import (
+    get_reports_list,
+    get_student_data_from_db,
+    process_and_save_report,
+    get_all_academic_periods,
+)
 from werkzeug.utils import secure_filename
 
 def allowed_file(filename):
@@ -51,7 +56,6 @@ def report_add():
         file.save(save_path)
 
         # DB BACKEND LOGIC
-        from app.utils import process_and_save_report
         exito = process_and_save_report(filename)
 
         if not exito:

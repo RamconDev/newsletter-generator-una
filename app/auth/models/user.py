@@ -1,9 +1,9 @@
-from app import db
 from flask_login import UserMixin
 from datetime import datetime
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime
 
+from app.extensions import db
 from .roles_users import roles_users
 
 class User(db.Model, UserMixin):

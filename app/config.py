@@ -3,49 +3,55 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-class ProductionConfig:
+
+def _normalize_pg_url(url: str | None) -> str | None:
+    if not url:
+        return None
+    if url.startswith("postgres://"):
+        url = url.replace("postgres://", "postgresql://", 1)
+    if url.startswith("postgresql://"):
+        return url.replace("postgresql://", "postgresql+psycopg://", 1)
+    return url
+
+
+class BaseConfig:
     DEBUG = False
     TESTING = False
 
-    # DB settings
-    SQLANCHEMY_TRACK_MODIFICATIONS = False
+    # SQLAlchemy
+    SQLALCHEMY_TRACK_MODIFICATIONS = False
 
-    URL_DB = os.getenv("URL_DB") or os.getenv("DB_ENGINE")
     SECRET_KEY = os.getenv("SECRET_KEY", "secret_key")
 
-    # DB_ENGINE = os.getenv("URL_DB") or os.getenv("DB_ENGINE", "sqlite")
-    USER_DB = os.getenv("USER_DB")
-    USER_PASSWORD = os.getenv("USER_PASSWORD")
-    SERVER_DB = os.getenv("SERVER_DB")
-    NAME_DB = os.getenv("NAME_DB")
-
-    # Dinamic url
-    if URL_DB and (URL_DB.startswith('postgresql') or URL_DB.startswith('postgres')):
-        if URL_DB.startswith("postgres://"):
-            SQLALCHEMY_DATABASE_URI = URL_DB.replace("postgres://", "postgresql://", 1)
-        else:
-            SQLALCHEMY_DATABASE_URI = URL_DB
-    elif URL_DB and URL_DB.startswith('sqlite'):
-        SQLALCHEMY_DATABASE_URI = f"{URL_DB}:///{NAME_DB}.db"  # ej: sqlite:///test.db
-    else:
-        SQLALCHEMY_DATABASE_URI = f"sqlite:///fallback.db"
-
-        # SQLALCHEMY_DATABASE_URI = f"{URL_DB}://{USER_DB}:{USER_PASSWORD}@{SERVER_DB}/{NAME_DB}"
-
-    ###
-    #
-    # 🧩 File report settings
-    #
-    ###
+    # File report settings
     UPLOAD_FOLDER = os.getenv("UPLOAD_FOLDER", "data")
     MAX_CONTENT_LENGTH = int(os.getenv("MAX_CONTENT_LENGTH", 16 * 1024 * 1024))
     MAX_FILE_SIZE = int(os.getenv("MAX_FILE_SIZE", 5 * 1024 * 1024))
     ALLOWED_EXTENSIONS = set(os.getenv("ALLOWED_EXTENSIONS", "rep").split(','))
 
-class DevelopmentConfig(ProductionConfig):
+
+class ProductionConfig(BaseConfig):
+    DEBUG = False
+    TESTING = False
+
+    # Prefer a single DATABASE_URL env var. Backwards compatible fallbacks: URL_DB or DB_ENGINE.
+    DATABASE_URL = _normalize_pg_url(
+        os.getenv("DATABASE_URL") or os.getenv("URL_DB") or os.getenv("DB_ENGINE")
+    )
+
+    SQLALCHEMY_DATABASE_URI = DATABASE_URL or ""
+
+
+class DevelopmentConfig(BaseConfig):
     DEBUG = True
 
-class TestingConfig(ProductionConfig):
+    DATABASE_URL = _normalize_pg_url(
+        os.getenv("DATABASE_URL") or os.getenv("URL_DB") or os.getenv("DB_ENGINE")
+    )
+
+    SQLALCHEMY_DATABASE_URI = DATABASE_URL or ""
+
+
+class TestingConfig(BaseConfig):
     TESTING = True
-    # Using an in-memory test database
-    SQLALCHEMY_DATABASE_URI = 'sqlite:///:memory:'
+    SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"

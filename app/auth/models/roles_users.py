@@ -1,4 +1,4 @@
-from app import db
+from app.extensions import db
 
 # class RolesUsers(db.Table):
 #     __tablename__ = 'roles_users'

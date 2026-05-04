@@ -2,7 +2,7 @@ from .models.role import Role
 from .models.user import User
 from .models.roles_users import roles_users
 
-from app import db
+from app.extensions import db
 
 from flask import Blueprint
 auth_bp = Blueprint('auth', __name__, template_folder="templates")

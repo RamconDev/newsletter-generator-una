@@ -63,7 +63,6 @@ coverage.xml
 
 # PyCharm / VSCode / other IDEs
 .idea/
-.vscode/
 *.sublime-project
 *.sublime-workspace
 
@@ -76,7 +75,6 @@ Thumbs.db
 
 # Local environment variables
 .env
-.env.*
 *.env
 
 # Migrations (optional: uncomment if you don't want to track them)
@@ -84,3 +82,6 @@ Thumbs.db
 
 # Flask-specific cache
 flask_session/
+temp_auto_push.bat
+temp_interactive_push.bat
+branch_structure.json
