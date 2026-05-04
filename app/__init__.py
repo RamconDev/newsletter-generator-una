@@ -1,27 +1,31 @@
+from flask import Flask
 import os
 
-from flask import Flask
-from flask_sqlalchemy import SQLAlchemy
-from flask_migrate import Migrate
-from flask_cors import CORS
-from dotenv import load_dotenv
-
-db = SQLAlchemy()
-migrate = Migrate()
+from .extensions import cors, db, migrate
 
 from .config import ProductionConfig, DevelopmentConfig, TestingConfig
-from .utils import get_reports_list
+from .reports.services import get_reports_list
 
 def create_app():
     app = Flask(__name__)
 
-    CORS(app)
+    cors.init_app(app)
 
     env = os.getenv('FLASK_ENV', 'development')
 
     if env == 'development':
+        _db_url = DevelopmentConfig.DATABASE_URL
+        if not _db_url:
+            raise RuntimeError("DATABASE_URL environment variable is required in Development")
+        if not _db_url.startswith("postgresql"):
+            raise RuntimeError("DATABASE_URL must be a PostgreSQL URI (postgresql://...)")
         app.config.from_object(DevelopmentConfig)
     elif env == 'production':
+        _db_url = ProductionConfig.DATABASE_URL
+        if not _db_url:
+            raise RuntimeError("DATABASE_URL environment variable is required in Production")
+        if not _db_url.startswith("postgresql"):
+            raise RuntimeError("DATABASE_URL must be a PostgreSQL URI (postgresql://...)")
         app.config.from_object(ProductionConfig)
     elif env == 'testing':
         app.config.from_object(TestingConfig)

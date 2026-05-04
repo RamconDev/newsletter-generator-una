@@ -105,3 +105,104 @@ La API cuenta con dos dominios principales: la gestión de reportes/estudiantes 
    python run.py
    ```
 El servidor se inicializará por defecto en `http://127.0.0.1:5000`.
+
+## Variables de Entorno y Despliegue
+
+La aplicación utiliza una sola variable de entorno para la conexión a la base de datos en producción: `DATABASE_URL`. Ejemplo de `DATABASE_URL`:
+
+```
+postgresql://USER:PASSWORD@HOST:5432/DBNAME
+```
+
+Recomendaciones rápidas:
+
+- Para desarrollo local puedes copiar `.env.example` a `.env` y adaptar las credenciales.
+- En producción, exporta `DATABASE_URL` en el entorno del proceso o configúralo en tu orquestador (systemd, Docker, Heroku, etc.).
+
+Ejemplos de uso:
+
+PowerShell (Windows):
+```powershell
+$env:DATABASE_URL = 'postgresql://user:password@db-host:5432/newsletter_db'
+python run.py
+```
+
+Linux / macOS (bash):
+```bash
+export DATABASE_URL='postgresql://user:password@db-host:5432/newsletter_db'
+python run.py
+```
+
+Ejemplo mínimo `docker-compose` (servicio app + postgres):
+```yaml
+version: '3.8'
+services:
+   db:
+      image: postgres:15
+      environment:
+         POSTGRES_USER: user
+         POSTGRES_PASSWORD: password
+         POSTGRES_DB: newsletter_db
+      volumes:
+         - db-data:/var/lib/postgresql/data
+
+   app:
+      build: .
+      environment:
+         DATABASE_URL: postgres://user:password@db:5432/newsletter_db
+      depends_on:
+         - db
+
+volumes:
+   db-data:
+```
+
+Nota: Docker Compose ejemplo usa `postgres://` para compatibilidad con algunas herramientas; la aplicación normaliza `postgres://` a `postgresql://` automáticamente.
+
+## Nueva estructura del proyecto (refactor)
+
+Recientemente se refactorizó la aplicación hacia una estructura modular más clara. Cambios principales:
+
+- `app/extensions.py`: centraliza las extensiones de Flask (`db`, `migrate`, `cors`, etc.).
+- `app/reports/services.py`: contiene la lógica de procesamiento de archivos de reporte y funciones relacionadas (`process_and_save_report`, `get_reports_list`, `get_student_data_from_db`, `get_all_academic_periods`, ...).
+- `app/utils.py`: ahora es una fachada de compatibilidad que re-exporta las funciones de reportes desde `app.reports.services` para mantener compatibilidad con importaciones existentes.
+- Blueprints: las rutas HTTP permanecen en `app/reports/routes.py` y `app/auth/routes.py`; la lógica de negocio se traslada a `services` dentro de cada módulo.
+
+Objetivos de la refactorización:
+
+- Separar responsabilidades: rutas (HTTP) → servicios (lógica) → modelos/repositorios (DB).
+- Facilitar pruebas unitarias y reutilización del código.
+- Reducir acoplamiento entre módulos y centralizar configuración/extensiones.
+
+Notas de migración y pruebas rápidas
+
+1. Para ejecutar localmente (desde la raíz del proyecto):
+
+```bash
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1   # Windows PowerShell
+pip install -r requirements.txt
+python run.py
+```
+
+2. Verifica la ruta base (index) y listado de reportes:
+
+- `GET /` — devuelve mensaje de inicio y lista de archivos encontrados en `data/`.
+- `GET /api/v1/reports` — lista de archivos `.REP` disponibles.
+
+3. Probar subida de archivo (ejemplo con `curl`):
+
+```bash
+curl -F "file=@data/LISEVAL3.REP" http://127.0.0.1:5000/api/v1/reports
+```
+
+4. Comentarios para desarrolladores
+
+- Si exportas funciones desde `app.utils`, ya funcionan porque `app.utils` re-exporta desde `app.reports.services`.
+- Para mover más lógica a servicios, crea `app/<module>/services.py` y deja las rutas ligeras.
+
+Si quieres, puedo:
+
+- ejecutar el servidor localmente y realizar una subida de prueba con `data/LISEVAL3.REP` para validar el flujo end-to-end, o
+- preparar una PR con estos cambios y un conjunto mínimo de pruebas unitarias para `app.reports.services`.
+
