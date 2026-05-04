@@ -76,7 +76,6 @@ Thumbs.db
 
 # Local environment variables
 .env
-.env.*
 *.env
 
 # Migrations (optional: uncomment if you don't want to track them)
