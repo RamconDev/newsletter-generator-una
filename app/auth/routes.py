@@ -8,6 +8,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.errors import api_error, api_success
 from app.extensions import db
 from app.auth import auth_bp as auth
+from app.auth.jwt_utils import require_auth, require_role, current_user_id, current_user_has_role
 from .models.user import User
 from .models.role import Role
 
@@ -16,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 ###
 #
-# ✅ LOGIN
+# ✅ LOGIN — público
 #
 ###
 @auth.route("/api/v1/auth/login", methods=['POST'])
@@ -45,10 +46,11 @@ def user_login():
 
 ###
 #
-# ✅ CREATE NEW USER
+# ✅ CREATE NEW USER — Admin
 #
 ###
 @auth.route("/api/v1/auth/user", methods=['POST'])
+@require_role('Admin')
 def user_create():
     data = request.get_json()
     if not data:
@@ -86,10 +88,11 @@ def user_create():
 
 ###
 #
-# ✅ GET ALL USERS
+# ✅ GET ALL USERS — Admin
 #
 ###
 @auth.route("/api/v1/auth/user", methods=['GET'])
+@require_role('Admin')
 def user_get():
     users = db.session.execute(
         db.select(User).order_by(User.id.desc())
@@ -103,11 +106,15 @@ def user_get():
 
 ###
 #
-# ✅ GET USER BY ID
+# ✅ GET USER BY ID — Admin o propio usuario
 #
 ###
 @auth.route("/api/v1/auth/user/<int:user_id>", methods=['GET'])
+@require_auth
 def user_get_id(user_id):
+    if not current_user_has_role('Admin') and current_user_id() != user_id:
+        return api_error("ACCESO_DENEGADO", "Solo puedes consultar tu propio perfil.", http_status=403)
+
     user = db.session.get(User, user_id)
     if not user:
         return api_error("USUARIO_NO_ENCONTRADO", f"El usuario {user_id} no existe.", http_status=404)
@@ -117,11 +124,15 @@ def user_get_id(user_id):
 
 ###
 #
-# ✅ UPDATE USER
+# ✅ UPDATE USER — Admin o propio usuario
 #
 ###
 @auth.route("/api/v1/auth/user/<int:user_id>", methods=['PUT'])
+@require_auth
 def user_update(user_id):
+    if not current_user_has_role('Admin') and current_user_id() != user_id:
+        return api_error("ACCESO_DENEGADO", "Solo puedes actualizar tu propio perfil.", http_status=403)
+
     user = db.session.get(User, user_id)
     if not user:
         return api_error("USUARIO_NO_ENCONTRADO", f"El usuario {user_id} no existe.", http_status=404)
@@ -151,10 +162,11 @@ def user_update(user_id):
 
 ###
 #
-# ✅ REMOVE USER
+# ✅ REMOVE USER — Admin
 #
 ###
 @auth.route("/api/v1/auth/user/<int:user_id>", methods=['DELETE'])
+@require_role('Admin')
 def user_delete(user_id):
     user = db.session.get(User, user_id)
     if not user:
@@ -173,10 +185,11 @@ def user_delete(user_id):
 
 ###
 #
-# ✅ ASSIGN ROLE
+# ✅ ASSIGN ROLE — Admin
 #
 ###
 @auth.route("/api/v1/auth/user/<int:user_id>/role", methods=['POST'])
+@require_role('Admin')
 def user_assign_role(user_id):
     data = request.get_json()
     if not data or not data.get('role'):
@@ -206,10 +219,11 @@ def user_assign_role(user_id):
 
 ###
 #
-# ✅ REMOVE ROLE
+# ✅ REMOVE ROLE — Admin
 #
 ###
 @auth.route("/api/v1/auth/user/<int:user_id>/role/<string:role_name>", methods=['DELETE'])
+@require_role('Admin')
 def user_remove_role(user_id, role_name):
     user = db.session.get(User, user_id)
     if not user:

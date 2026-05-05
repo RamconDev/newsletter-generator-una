@@ -5,6 +5,7 @@ from flask import request, jsonify, current_app
 from werkzeug.utils import secure_filename
 
 from app.errors import api_error, api_success
+from app.auth.jwt_utils import require_auth, require_role
 from app.reports import reports_bp as report
 from app.reports.services import (
     get_reports_list,
@@ -27,6 +28,7 @@ def allowed_file(filename: str) -> bool:
 #
 ###
 @report.route("/api/v1/reports", methods=['POST'])
+@require_role('Admin', 'Editor')
 def report_add():
     if 'file' not in request.files:
         return api_error("ARCHIVO_NO_ENVIADO", "No se envió ningún archivo.", campo="file")
@@ -85,6 +87,7 @@ def report_add():
 #
 ###
 @report.route("/api/v1/reports", methods=['GET'])
+@require_role('Admin', 'Editor', 'Viewer')
 def reports_get():
     return api_success(data={"files": get_reports_list()}, mensaje="Listado de reportes.")
 
@@ -95,6 +98,7 @@ def reports_get():
 #
 ###
 @report.route("/api/v1/academic-periods", methods=['GET'])
+@require_role('Admin', 'Editor', 'Viewer')
 def academic_periods_get():
     try:
         periods = get_all_academic_periods()
@@ -110,6 +114,7 @@ def academic_periods_get():
 #
 ###
 @report.route("/api/v1/academic-periods/<string:period_code>/students", methods=['GET'])
+@require_role('Admin', 'Editor', 'Viewer')
 def students_by_period(period_code):
     raw_init  = request.args.get('init',  '0')
     raw_limit = request.args.get('limit', '20')
@@ -155,6 +160,7 @@ def students_by_period(period_code):
 #
 ###
 @report.route("/api/v1/students/<string:identification>", methods=['GET'])
+@require_role('Admin', 'Editor', 'Viewer')
 def student_search(identification):
     period_filter = request.args.get('period')
     result = get_student_data_from_db(identification, period_filter=period_filter)
