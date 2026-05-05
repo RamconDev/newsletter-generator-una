@@ -2,7 +2,27 @@
 
 **Base URL**: `http://127.0.0.1:5000`  
 **Content-Type**: `application/json` (except file uploads)  
-**Auth**: No token layer yet — all endpoints are open.
+**Auth**: Login returns a JWT. Protected endpoints expect `Authorization: Bearer <token>`.
+
+---
+
+## Índice
+
+### Auth
+- [POST `/api/v1/auth/login` — Login](#post-apiv1authlogin--login)
+- [POST `/api/v1/auth/user` — Crear usuario](#post-apiv1authuser--create-user)
+- [GET `/api/v1/auth/user` — Listar usuarios](#get-apiv1authuser--list-all-users)
+- [GET `/api/v1/auth/user/:id` — Obtener usuario por ID](#get-apiv1authuserid--get-user-by-id)
+- [PUT `/api/v1/auth/user/:id` — Actualizar usuario](#put-apiv1authuserid--update-user)
+- [DELETE `/api/v1/auth/user/:id` — Eliminar usuario](#delete-apiv1authuserid--delete-user)
+- [POST `/api/v1/auth/user/:id/role` — Asignar rol](#post-apiv1authuseridRole--assign-role)
+- [DELETE `/api/v1/auth/user/:id/role/:role_name` — Quitar rol](#delete-apiv1authuseridrolerole_name--remove-role)
+
+### Reports
+- [POST `/api/v1/reports` — Subir reporte](#post-apiv1reports--upload-report-file)
+- [GET `/api/v1/reports` — Listar reportes](#get-apiv1reports--list-uploaded-reports)
+- [GET `/api/v1/academic-periods` — Periodos académicos](#get-apiv1academic-periods--list-academic-periods)
+- [GET `/api/v1/students/:identification` — Buscar estudiante](#get-apiv1studentsidentification--search-student-by-cédula)
 
 ---
 
@@ -14,6 +34,62 @@ New users are automatically assigned the `Viewer` role on creation.
 ---
 
 ## Auth Endpoints
+
+### POST `/api/v1/auth/login` — Login
+
+Validates `username` + `password` and returns a signed JWT. The token expires after the time configured in `JWT_EXP_HOURS` (default: 1 hour).
+
+**Request body**
+
+| Field | Type | Required |
+|-------|------|----------|
+| `username` | string | yes |
+| `password` | string | yes |
+
+```bash
+curl -X POST http://127.0.0.1:5000/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username": "ozambrano", "password": "secret123"}'
+```
+
+**Response `200`**
+```json
+{
+  "status": "success",
+  "message": "Login exitoso.",
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+}
+```
+
+The decoded payload contains:
+
+| Claim | Value |
+|-------|-------|
+| `sub` | user ID |
+| `email` | user email |
+| `firstname` | first name |
+| `lastname` | last name |
+| `roles` | array of role names |
+| `exp` | expiration timestamp (UTC) |
+
+**Response `400`** — missing fields
+```json
+{ "status": "error", "message": "username y password son requeridos." }
+```
+
+**Response `401`** — wrong credentials
+```json
+{ "status": "error", "message": "Credenciales inválidas." }
+```
+
+**Environment variables**
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `JWT_SECRET_KEY` | `jwt_secret_key` | Signing secret |
+| `JWT_EXP_HOURS` | `1` | Token lifetime in hours |
+
+---
 
 ### POST `/api/v1/auth/user` — Create user
 
@@ -347,10 +423,20 @@ curl http://127.0.0.1:5000/api/v1/academic-periods
 
 ### GET `/api/v1/students/:identification` — Search student by cédula
 
-Looks up a student by their Venezuelan national ID (`cédula`).
+Looks up a student by their Venezuelan national ID (`cédula`). Optionally filter by academic period using the `?period` query param — the filter is applied at the database level.
+
+**Query params**
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `period` | string | no | Academic period code (e.g. `2023-1`). If omitted, all periods are returned. |
 
 ```bash
-curl http://127.0.0.1:5000/api/v1/students/12345678
+# All periods
+curl http://127.0.0.1:5000/api/v1/students/V-12345678
+
+# Single period
+curl http://127.0.0.1:5000/api/v1/students/V-12345678?period=2023-1
 ```
 
 **Response `200`**
@@ -359,15 +445,28 @@ curl http://127.0.0.1:5000/api/v1/students/12345678
   "status": "success",
   "message": "Student found.",
   "data": {
-    "identification": "12345678",
-    "name": "Juan Pérez",
-    "major": "Administración",
-    "grades": [
-      { "subject_code": "010", "subject_name": "Matemáticas I", "period": "2023-1", "grade": 14 }
+    "cedula": "V-12345678",
+    "nombre": "Juan Pérez",
+    "carrera": "610",
+    "periodos": [
+      {
+        "id": 1,
+        "codigo": "2023-1",
+        "materias": [
+          {
+            "codigo_asignatura": "010",
+            "asignatura": "Curso Introductorio",
+            "condicion": "RG",
+            "nota_final": "6/6"
+          }
+        ]
+      }
     ]
   }
 }
 ```
+
+> When `?period` is provided and the student has no grades in that period, `periodos` is returned as an empty array `[]`.
 
 **Response `404`**
 ```json

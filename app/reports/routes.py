@@ -176,8 +176,9 @@ def academic_periods_get():
 ###
 @report.route("/api/v1/students/<string:identification>", methods=['GET'])
 def student_search(identification):
-    result = get_student_data_from_db(identification)
-    
+    period_filter = request.args.get('period')
+    result = get_student_data_from_db(identification, period_filter=period_filter)
+
     if result:
         return jsonify(
             {

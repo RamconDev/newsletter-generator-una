@@ -99,6 +99,18 @@ class GradeRepository:
     """Repository for Grade (Nota) operations."""
 
     @staticmethod
+    def find_by_student_and_period(student_id: int, period_code: str) -> list:
+        return (
+            Grade.query
+            .join(AcademicPeriod, Grade.academic_period_id == AcademicPeriod.id)
+            .filter(
+                Grade.student_id == student_id,
+                AcademicPeriod.code == period_code
+            )
+            .all()
+        )
+
+    @staticmethod
     def find_existing(student_id: int, subject_id: int, academic_period_id: int = None) -> Grade:
         """
         Find existing grade for a student-subject-period combination.

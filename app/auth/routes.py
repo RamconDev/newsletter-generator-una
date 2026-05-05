@@ -1,22 +1,50 @@
-from flask import request, jsonify
-from datetime import datetime
+from flask import request, jsonify, current_app
+from datetime import datetime, timezone, timedelta
 from sqlalchemy.exc import SQLAlchemyError
+import jwt as pyjwt
 
 from app.extensions import db
 from app.auth import auth_bp as auth
 
-from sqlalchemy.exc import SQLAlchemyError
-
 from .models.user import User
 from .models.role import Role
-##
+###
 #
+# ✅ LOGIN
 #
-#
-##
-@auth.route("/auth")
-def login():
-    return "Login Authentication Test"
+###
+@auth.route("/api/v1/auth/login", methods=['POST'])
+def user_login():
+    data = request.get_json()
+    if not data or not data.get('username') or not data.get('password'):
+        return jsonify({
+            'status': 'error',
+            'message': 'username y password son requeridos.'
+        }), 400
+
+    user = User.query.filter_by(username=data['username']).first()
+    if not user or not user.check_password(data['password']):
+        return jsonify({
+            'status': 'error',
+            'message': 'Credenciales inválidas.'
+        }), 401
+
+    exp = datetime.now(timezone.utc) + timedelta(hours=current_app.config['JWT_EXP_HOURS'])
+    payload = {
+        'sub': user.id,
+        'email': user.email,
+        'firstname': user.firstname,
+        'lastname': user.lastname,
+        'roles': [role.name for role in user.roles],
+        'exp': exp,
+    }
+    token = pyjwt.encode(payload, current_app.config['JWT_SECRET_KEY'], algorithm='HS256')
+
+    return jsonify({
+        'status': 'success',
+        'message': 'Login exitoso.',
+        'token': token
+    }), 200
 
 ###
 #

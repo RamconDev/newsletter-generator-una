@@ -189,16 +189,17 @@ def process_and_save_report(file_name, encoding='latin-1'):
         print(f"❌ Error procesando el archivo para la BD: {e}")
         return False
 
-def _format_student_data(student):
+def _format_student_data(student, grades=None):
     resultado = {
         "cedula": student.identification,
         "nombre": student.full_name,
         "carrera": student.major.code,
         "periodos": []
     }
-    
+
+    grade_list = grades if grades is not None else student.grades
     periodos_dict = {}
-    for grade in student.grades:
+    for grade in grade_list:
         period_code = grade.academic_period.code if grade.academic_period else "Desconocido"
         period_id = grade.academic_period.id if grade.academic_period else None
                 
@@ -224,16 +225,27 @@ def _format_student_data(student):
         
     return resultado
 
-def get_student_data_from_db(target_cedula, mode="exact"):
+def get_student_data_from_db(target_cedula, mode="exact", period_filter=None):
     if mode == "prefix":
         students = StudentRepository.find_by_prefix(target_cedula)
         if not students:
             return None
-        return [_format_student_data(student) for student in students]
+        if period_filter:
+            return [
+                _format_student_data(
+                    s,
+                    grades=GradeRepository.find_by_student_and_period(s.id, period_filter)
+                )
+                for s in students
+            ]
+        return [_format_student_data(s) for s in students]
     else:
         student = StudentRepository.find_by_identification(target_cedula)
         if not student:
             return None
+        if period_filter:
+            grades = GradeRepository.find_by_student_and_period(student.id, period_filter)
+            return _format_student_data(student, grades=grades)
         return _format_student_data(student)
 
 def get_all_academic_periods():
