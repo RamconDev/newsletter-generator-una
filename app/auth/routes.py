@@ -1,13 +1,19 @@
-from flask import request, jsonify, current_app
+import logging
 from datetime import datetime, timezone, timedelta
-from sqlalchemy.exc import SQLAlchemyError
-import jwt as pyjwt
 
+import jwt as pyjwt
+from flask import request, current_app
+from sqlalchemy.exc import SQLAlchemyError
+
+from app.errors import api_error, api_success
 from app.extensions import db
 from app.auth import auth_bp as auth
-
 from .models.user import User
 from .models.role import Role
+
+logger = logging.getLogger(__name__)
+
+
 ###
 #
 # ✅ LOGIN
@@ -17,17 +23,11 @@ from .models.role import Role
 def user_login():
     data = request.get_json()
     if not data or not data.get('username') or not data.get('password'):
-        return jsonify({
-            'status': 'error',
-            'message': 'username y password son requeridos.'
-        }), 400
+        return api_error("CAMPO_REQUERIDO", "username y password son requeridos.")
 
     user = User.query.filter_by(username=data['username']).first()
     if not user or not user.check_password(data['password']):
-        return jsonify({
-            'status': 'error',
-            'message': 'Credenciales inválidas.'
-        }), 401
+        return api_error("CREDENCIALES_INVALIDAS", "Credenciales inválidas.", http_status=401)
 
     exp = datetime.now(timezone.utc) + timedelta(hours=current_app.config['JWT_EXP_HOURS'])
     payload = {
@@ -40,11 +40,8 @@ def user_login():
     }
     token = pyjwt.encode(payload, current_app.config['JWT_SECRET_KEY'], algorithm='HS256')
 
-    return jsonify({
-        'status': 'success',
-        'message': 'Login exitoso.',
-        'token': token
-    }), 200
+    return api_success(data={"token": token}, mensaje="Login exitoso.")
+
 
 ###
 #
@@ -54,21 +51,23 @@ def user_login():
 @auth.route("/api/v1/auth/user", methods=['POST'])
 def user_create():
     data = request.get_json()
-
     if not data:
-        return jsonify({
-            'error': 'not data recived'
-        }), 400
-    
+        return api_error("CUERPO_REQUERIDO", "El cuerpo de la solicitud es requerido.")
+
+    required = ['firstname', 'lastname', 'username', 'email', 'password']
+    for field in required:
+        if not data.get(field):
+            return api_error("CAMPO_REQUERIDO", f"El campo '{field}' es requerido.", campo=field)
+
     try:
         new_user = User(
-            firstname = data.get('firstname'),
-            lastname = data.get('lastname'),
-            username = data.get('username'),
-            email = data.get('email'),
-            phone = data.get('phone')
+            firstname=data['firstname'],
+            lastname=data['lastname'],
+            username=data['username'],
+            email=data['email'],
+            phone=data.get('phone'),
         )
-        new_user.set_password(data.get('password'))
+        new_user.set_password(data['password'])
 
         viewer_role = Role.query.filter_by(name='Viewer').first()
         if viewer_role:
@@ -77,69 +76,44 @@ def user_create():
         db.session.add(new_user)
         db.session.commit()
 
-        return jsonify({
-            'message': 'registered successfully',
-            'data': new_user.to_dict()
-        }), 200
-    except SQLAlchemyError as e:
+        return api_success(data=new_user.to_dict(), mensaje="Usuario registrado correctamente.", http_status=201)
+
+    except SQLAlchemyError:
         db.session.rollback()
-        return jsonify({
-            'error': 'database error',
-            'details': str(e)
-        }), 400
-    except Exception as e:
-        db.session.rollback()
-        return jsonify({
-            'error': 'exception error',
-            'details': str(e)
-        }), 400
-   
+        logger.exception("Error creating user")
+        return api_error("ERROR_BASE_DATOS", "No se pudo crear el usuario. El username o email ya existe.", http_status=409)
+
+
 ###
 #
 # ✅ GET ALL USERS
 #
-### 
+###
 @auth.route("/api/v1/auth/user", methods=['GET'])
 def user_get():
-    users_list = db.session.execute(
+    users = db.session.execute(
         db.select(User).order_by(User.id.desc())
     ).scalars().all()
 
-    results = [user.to_dict() for user in users_list]
+    if not users:
+        return api_error("USUARIOS_NO_ENCONTRADOS", "No se encontraron usuarios registrados.", http_status=404)
 
-    if not results:
-        return jsonify({
-            'status': 'error',
-            'message': 'No se encontraron usuarios registrados.'
-        }), 404
+    return api_success(data=[u.to_dict() for u in users], mensaje="Usuarios obtenidos correctamente.")
 
-    return jsonify({
-        'status': 'success',
-        'message': 'Usuarios obtenidos correctamente.',
-        'data': results
-    }), 200
-   
+
 ###
 #
 # ✅ GET USER BY ID
 #
 ###
-
 @auth.route("/api/v1/auth/user/<int:user_id>", methods=['GET'])
 def user_get_id(user_id):
     user = db.session.get(User, user_id)
-
     if not user:
-        return jsonify({
-            'status': 'error',
-            'message': f"usuario id {user_id} no existe."
-        }), 404
+        return api_error("USUARIO_NO_ENCONTRADO", f"El usuario {user_id} no existe.", http_status=404)
 
-    return jsonify({
-        'status': 'success',
-        'message': 'Usuario obtenido correctamente.',
-        'data': user.to_dict()
-    }), 200
+    return api_success(data=user.to_dict(), mensaje="Usuario obtenido correctamente.")
+
 
 ###
 #
@@ -149,29 +123,30 @@ def user_get_id(user_id):
 @auth.route("/api/v1/auth/user/<int:user_id>", methods=['PUT'])
 def user_update(user_id):
     user = db.session.get(User, user_id)
-
     if not user:
-        return jsonify({
-            'status': 'error',
-            'message': f"usuario id {user_id} no existe."
-        }), 404
-    
+        return api_error("USUARIO_NO_ENCONTRADO", f"El usuario {user_id} no existe.", http_status=404)
+
+    data = request.get_json()
+    if not data:
+        return api_error("CUERPO_REQUERIDO", "El cuerpo de la solicitud es requerido.")
+
+    updatable = ('firstname', 'lastname', 'email', 'phone')
+    for field in updatable:
+        if field in data and data[field] is not None:
+            setattr(user, field, data[field])
+
+    if data.get('password'):
+        user.set_password(data['password'])
+
+    user.modificated_at = datetime.now(timezone.utc)
+
     try:
-        pass
-    except SQLAlchemyError as e:
+        db.session.commit()
+        return api_success(data=user.to_dict(), mensaje="Usuario actualizado correctamente.")
+    except SQLAlchemyError:
         db.session.rollback()
-        return jsonify({
-            'status': 'error',
-            'message': 'Error de base de datos.',
-            'details': str(e)
-        }), 400
-    except Exception as e:
-        db.session.rollback()
-        return jsonify({
-            'status': 'error',
-            'message': 'Error inesperado.',
-            'details': str(e)
-        }), 400
+        logger.exception("Error updating user %d", user_id)
+        return api_error("ERROR_BASE_DATOS", "No se pudo actualizar el usuario.", http_status=409)
 
 
 ###
@@ -182,92 +157,52 @@ def user_update(user_id):
 @auth.route("/api/v1/auth/user/<int:user_id>", methods=['DELETE'])
 def user_delete(user_id):
     user = db.session.get(User, user_id)
-
     if not user:
-        return jsonify({
-            'status': 'error',
-            'message': f"usuario id {user_id} no existe."
-        }), 404
-    
+        return api_error("USUARIO_NO_ENCONTRADO", f"El usuario {user_id} no existe.", http_status=404)
+
     try:
         username = user.username
         db.session.delete(user)
         db.session.commit()
-        
-        return jsonify({
-            'status': 'success',
-            'message': 'Usuario eliminado correctamente.',
-            'data': {
-               'id': user_id,
-               'username': username
-            }
-        }), 200
-    except SQLAlchemyError as e:
+        return api_success(data={"id": user_id, "username": username}, mensaje="Usuario eliminado correctamente.")
+    except SQLAlchemyError:
         db.session.rollback()
-        return jsonify({
-            'status': 'error',
-            'message': 'Error de base de datos.',
-            'details': str(e)
-        }), 400
-    except Exception as e:
-        db.session.rollback()
-        return jsonify({
-            'status': 'error',
-            'message': 'Error inesperado.',
-            'details': str(e)
-        }), 400
+        logger.exception("Error deleting user %d", user_id)
+        return api_error("ERROR_BASE_DATOS", "No se pudo eliminar el usuario.", http_status=500)
+
 
 ###
 #
-# ✅ ASSING ROLE
+# ✅ ASSIGN ROLE
 #
 ###
 @auth.route("/api/v1/auth/user/<int:user_id>/role", methods=['POST'])
 def user_assign_role(user_id):
     data = request.get_json()
     if not data or not data.get('role'):
-        return jsonify({
-            'status': 'error',
-            'message': 'El rol es requerido.'
-        }), 400
+        return api_error("CAMPO_REQUERIDO", "El campo 'role' es requerido.", campo="role")
 
     user = db.session.get(User, user_id)
     if not user:
-        return jsonify({
-            'status': 'error',
-            'message': f"usuario id {user_id} no existe."
-        }), 404
+        return api_error("USUARIO_NO_ENCONTRADO", f"El usuario {user_id} no existe.", http_status=404)
 
-    role_name = data.get('role')
+    role_name = data['role']
     role = Role.query.filter_by(name=role_name).first()
-
     if not role:
-        return jsonify({
-            'status': 'error',
-            'message': f"Rol '{role_name}' no existe."
-        }), 404
+        return api_error("ROL_NO_ENCONTRADO", f"El rol '{role_name}' no existe.", http_status=404, campo="role")
 
     if user.has_role(role_name):
-        return jsonify({
-            'status': 'error',
-            'message': f"El usuario ya tiene el rol '{role_name}'."
-        }), 200
+        return api_error("ROL_YA_ASIGNADO", f"El usuario ya tiene el rol '{role_name}'.", http_status=409)
 
     try:
         user.add_role(role)
         db.session.commit()
-        return jsonify({
-            'status': 'success',
-            'message': 'Rol asignado correctamente.',
-            'data': user.to_dict()
-        }), 200
-    except SQLAlchemyError as e:
+        return api_success(data=user.to_dict(), mensaje="Rol asignado correctamente.")
+    except SQLAlchemyError:
         db.session.rollback()
-        return jsonify({
-            'status': 'error',
-            'message': 'Error de base de datos.',
-            'details': str(e)
-        }), 400
+        logger.exception("Error assigning role '%s' to user %d", role_name, user_id)
+        return api_error("ERROR_BASE_DATOS", "No se pudo asignar el rol.", http_status=500)
+
 
 ###
 #
@@ -278,36 +213,20 @@ def user_assign_role(user_id):
 def user_remove_role(user_id, role_name):
     user = db.session.get(User, user_id)
     if not user:
-        return jsonify({
-            'status': 'error',
-            'message': f"usuario id {user_id} no existe."
-        }), 404
+        return api_error("USUARIO_NO_ENCONTRADO", f"El usuario {user_id} no existe.", http_status=404)
 
     role = Role.query.filter_by(name=role_name).first()
     if not role:
-        return jsonify({
-            'status': 'error',
-            'message': f"Rol '{role_name}' no existe."
-        }), 404
+        return api_error("ROL_NO_ENCONTRADO", f"El rol '{role_name}' no existe.", http_status=404)
 
     if not user.has_role(role_name):
-        return jsonify({
-            'status': 'error',
-            'message': f"El usuario no tiene el rol '{role_name}'."
-        }), 200
+        return api_error("ROL_NO_ASIGNADO", f"El usuario no tiene el rol '{role_name}'.", http_status=404)
 
     try:
         user.roles.remove(role)
         db.session.commit()
-        return jsonify({
-            'status': 'success',
-            'message': 'Rol eliminado correctamente.',
-            'data': user.to_dict()
-        }), 200
-    except SQLAlchemyError as e:
+        return api_success(data=user.to_dict(), mensaje="Rol eliminado correctamente.")
+    except SQLAlchemyError:
         db.session.rollback()
-        return jsonify({
-            'status': 'error',
-            'message': 'Error de base de datos.',
-            'details': str(e)
-        }), 400
+        logger.exception("Error removing role '%s' from user %d", role_name, user_id)
+        return api_error("ERROR_BASE_DATOS", "No se pudo eliminar el rol.", http_status=500)
