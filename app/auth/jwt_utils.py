@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timezone, timedelta
 from functools import wraps
 
 import jwt as pyjwt
@@ -9,7 +10,16 @@ from app.errors import api_error
 logger = logging.getLogger(__name__)
 
 
-def _decode_token(token: str) -> tuple[dict | None, object]:
+def _build_token(user_payload: dict, token_type: str, exp_hours: int) -> str:
+    payload = {
+        **user_payload,
+        'type': token_type,
+        'exp': datetime.now(timezone.utc) + timedelta(hours=exp_hours),
+    }
+    return pyjwt.encode(payload, current_app.config['JWT_SECRET_KEY'], algorithm='HS256')
+
+
+def _decode_token(token: str, expected_type: str | None = None) -> tuple[dict | None, object]:
     """Decode a JWT. Returns (payload, error_response) — one of them is None."""
     try:
         payload = pyjwt.decode(
@@ -17,11 +27,28 @@ def _decode_token(token: str) -> tuple[dict | None, object]:
             current_app.config['JWT_SECRET_KEY'],
             algorithms=['HS256'],
         )
-        return payload, None
     except pyjwt.ExpiredSignatureError:
         return None, api_error("TOKEN_EXPIRADO", "El token ha expirado.", http_status=401)
     except pyjwt.InvalidTokenError:
         return None, api_error("TOKEN_INVALIDO", "Token inválido o malformado.", http_status=401)
+
+    if expected_type is not None:
+        token_type = payload.get('type')
+        # Tokens sin claim 'type' (emitidos antes de este cambio) se aceptan como access
+        if token_type is not None and token_type != expected_type:
+            if expected_type == 'refresh':
+                return None, api_error(
+                    "TOKEN_TIPO_INVALIDO",
+                    "Se debe enviar el refresh_token, no el access token.",
+                    http_status=400,
+                )
+            return None, api_error(
+                "TOKEN_TIPO_INVALIDO",
+                "El refresh token no puede usarse para autenticación.",
+                http_status=401,
+            )
+
+    return payload, None
 
 
 def _extract_bearer() -> str | None:
@@ -39,7 +66,7 @@ def require_auth(f):
         if not token:
             return api_error("TOKEN_REQUERIDO", "Se requiere el header Authorization: Bearer <token>.", http_status=401)
 
-        payload, err = _decode_token(token)
+        payload, err = _decode_token(token, expected_type='access')
         if err:
             return err
 
@@ -57,7 +84,7 @@ def require_role(*roles: str):
             if not token:
                 return api_error("TOKEN_REQUERIDO", "Se requiere el header Authorization: Bearer <token>.", http_status=401)
 
-            payload, err = _decode_token(token)
+            payload, err = _decode_token(token, expected_type='access')
             if err:
                 return err
 

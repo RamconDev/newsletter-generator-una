@@ -1,14 +1,13 @@
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 
-import jwt as pyjwt
 from flask import request, current_app
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.errors import api_error, api_success
 from app.extensions import db
 from app.auth import auth_bp as auth
-from app.auth.jwt_utils import require_auth, require_role, current_user_id, current_user_has_role
+from app.auth.jwt_utils import require_auth, require_role, current_user_id, current_user_has_role, _build_token, _decode_token
 from .models.user import User
 from .models.role import Role
 
@@ -30,18 +29,39 @@ def user_login():
     if not user or not user.check_password(data['password']):
         return api_error("CREDENCIALES_INVALIDAS", "Credenciales inválidas.", http_status=401)
 
-    exp = datetime.now(timezone.utc) + timedelta(hours=current_app.config['JWT_EXP_HOURS'])
-    payload = {
+    user_payload = {
         'sub': user.id,
         'email': user.email,
         'firstname': user.firstname,
         'lastname': user.lastname,
         'roles': [role.name for role in user.roles],
-        'exp': exp,
     }
-    token = pyjwt.encode(payload, current_app.config['JWT_SECRET_KEY'], algorithm='HS256')
+    token = _build_token(user_payload, 'access', current_app.config['JWT_EXP_HOURS'])
+    refresh_token = _build_token(user_payload, 'refresh', current_app.config['JWT_REFRESH_EXP_HOURS'])
 
-    return api_success(data={"token": token}, mensaje="Login exitoso.")
+    return api_success(data={"token": token, "refresh_token": refresh_token}, mensaje="Login exitoso.")
+
+
+###
+#
+# ✅ REFRESH TOKEN — público
+#
+###
+@auth.route("/api/v1/auth/refresh-token", methods=['POST'])
+def token_refresh():
+    data = request.get_json()
+    if not data or not data.get('refresh_token'):
+        return api_error("CAMPO_REQUERIDO", "El campo 'refresh_token' es requerido.", campo="refresh_token")
+
+    payload, err = _decode_token(data['refresh_token'], expected_type='refresh')
+    if err:
+        return err
+
+    user_payload = {k: payload[k] for k in ('sub', 'email', 'firstname', 'lastname', 'roles') if k in payload}
+    token = _build_token(user_payload, 'access', current_app.config['JWT_EXP_HOURS'])
+    refresh_token = _build_token(user_payload, 'refresh', current_app.config['JWT_REFRESH_EXP_HOURS'])
+
+    return api_success(data={"token": token, "refresh_token": refresh_token}, mensaje="Token renovado exitosamente.")
 
 
 ###

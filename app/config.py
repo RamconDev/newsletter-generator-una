@@ -26,6 +26,7 @@ class BaseConfig:
     # JWT settings
     JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "jwt_secret_key")
     JWT_EXP_HOURS = int(os.getenv("JWT_EXP_HOURS", 1))
+    JWT_REFRESH_EXP_HOURS = int(os.getenv("JWT_REFRESH_EXP_HOURS", JWT_EXP_HOURS * 2))
 
     # File report settings
     UPLOAD_FOLDER = os.getenv("UPLOAD_FOLDER", "data")
