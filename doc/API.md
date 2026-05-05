@@ -22,6 +22,7 @@
 - [POST `/api/v1/reports` — Subir reporte](#post-apiv1reports--upload-report-file)
 - [GET `/api/v1/reports` — Listar reportes](#get-apiv1reports--list-uploaded-reports)
 - [GET `/api/v1/academic-periods` — Periodos académicos](#get-apiv1academic-periods--list-academic-periods)
+- [GET `/api/v1/academic-periods/:period_code/students` — Listar estudiantes por período](#get-apiv1academic-periodsperiod_codestudents--list-students-by-period)
 - [GET `/api/v1/students/:identification` — Buscar estudiante](#get-apiv1studentsidentification--search-student-by-cédula)
 
 ---
@@ -417,6 +418,69 @@ curl http://127.0.0.1:5000/api/v1/academic-periods
 **Response `500`** — unexpected error
 ```json
 { "status": "error", "message": "Error al obtener los periodos académicos: <detail>" }
+```
+
+---
+
+### GET `/api/v1/academic-periods/:period_code/students` — List students by period
+
+Returns a paginated, filterable, and sortable list of students who have at least one grade registered in the given academic period.
+
+**Path params**
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `period_code` | string | Academic period code (e.g. `2023-1`) |
+
+**Query params**
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `init` | int | `0` | Offset — number of records to skip |
+| `limit` | int | `20` | Page size (1–100) |
+| `order` | string | `nombre` | Sort field: `cedula`, `nombre`, `carrera` |
+| `asc` | bool | `true` | Sort direction: `true` = ASC, `false` = DESC |
+| `carrera` | string | — | Exact filter by major code (e.g. `610`) |
+| `nombre` | string | — | Partial case-insensitive filter on full name |
+
+```bash
+# Default — first 20 students sorted by name ASC
+curl http://127.0.0.1:5000/api/v1/academic-periods/2023-1/students
+
+# Page 2, sorted by cédula DESC
+curl "http://127.0.0.1:5000/api/v1/academic-periods/2023-1/students?init=20&limit=20&order=cedula&asc=false"
+
+# Filter by major + partial name
+curl "http://127.0.0.1:5000/api/v1/academic-periods/2023-1/students?carrera=610&nombre=garcia"
+```
+
+**Response `200`**
+```json
+{
+  "status": "success",
+  "message": "Students list.",
+  "data": {
+    "students": [
+      { "cedula": "V-12345678", "nombre": "Juan García", "carrera": "610" },
+      { "cedula": "V-87654321", "nombre": "María López", "carrera": "810" }
+    ],
+    "total": 85,
+    "init": 0,
+    "limit": 20
+  }
+}
+```
+
+> `total` reflects the full count after filters are applied, not just the current page size. Use it to calculate the number of pages: `ceil(total / limit)`.
+
+**Response `400`** — invalid query param
+```json
+{ "status": "error", "message": "'limit' debe ser un entero entre 1 y 100." }
+```
+
+**Response `404`** — period not found
+```json
+{ "status": "error", "message": "Período académico '9999-9' no encontrado." }
 ```
 
 ---

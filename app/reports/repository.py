@@ -4,6 +4,8 @@ Encapsulates all database access logic for academic models.
 Follows Single Responsibility Principle: each repository handles one model.
 """
 
+from sqlalchemy import asc as asc_fn, desc as desc_fn
+
 from app.extensions import db
 from app.models import Subject, Major, Student, Grade, AcademicPeriod
 
@@ -59,6 +61,43 @@ class StudentRepository:
     def find_by_prefix(prefix: str) -> list:
         """Find all students whose identification starts with prefix."""
         return Student.query.filter(Student.identification.like(f"{prefix}%")).all()
+
+    @staticmethod
+    def find_by_period_paginated(
+        period_code: str,
+        init: int,
+        limit: int,
+        order: str,
+        ascending: bool,
+        carrera: str | None,
+        nombre: str | None,
+    ) -> tuple[list, int]:
+        order_map = {
+            "cedula": Student.identification,
+            "nombre": Student.full_name,
+            "carrera": Major.code,
+        }
+        col = order_map.get(order, Student.full_name)
+
+        query = (
+            db.session.query(Student)
+            .join(Major, Student.major_id == Major.id)
+            .join(Grade, Grade.student_id == Student.id)
+            .join(AcademicPeriod, Grade.academic_period_id == AcademicPeriod.id)
+            .filter(AcademicPeriod.code == period_code)
+            .distinct()
+        )
+
+        if carrera:
+            query = query.filter(Major.code == carrera)
+        if nombre:
+            query = query.filter(Student.full_name.ilike(f"%{nombre}%"))
+
+        query = query.order_by(asc_fn(col) if ascending else desc_fn(col))
+
+        total = query.count()
+        students = query.offset(init).limit(limit).all()
+        return students, total
 
     @staticmethod
     def create(identification: str, full_name: str, major_id: int) -> Student:

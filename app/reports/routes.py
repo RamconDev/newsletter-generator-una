@@ -5,6 +5,7 @@ import os
 from app.reports.services import (
     get_reports_list,
     get_student_data_from_db,
+    get_students_by_period,
     process_and_save_report,
     get_all_academic_periods,
 )
@@ -168,6 +169,48 @@ def academic_periods_get():
             'status': 'error',
             'message': f'Error al obtener los periodos académicos: {str(e)}'
         }), 500
+
+###
+#
+# ✅ STUDENTS BY ACADEMIC PERIOD (paginated, filtered, ordered)
+#
+###
+@report.route("/api/v1/academic-periods/<string:period_code>/students", methods=['GET'])
+def students_by_period(period_code):
+    raw_init  = request.args.get('init',  '0')
+    raw_limit = request.args.get('limit', '20')
+    raw_order = request.args.get('order', 'nombre')
+    raw_asc   = request.args.get('asc',   'true')
+    carrera   = request.args.get('carrera') or None
+    nombre    = request.args.get('nombre')  or None
+
+    try:
+        init = int(raw_init)
+        if init < 0:
+            raise ValueError
+    except ValueError:
+        return jsonify({'status': 'error', 'message': "'init' debe ser un entero >= 0."}), 400
+
+    try:
+        limit = int(raw_limit)
+        if not (1 <= limit <= 100):
+            raise ValueError
+    except ValueError:
+        return jsonify({'status': 'error', 'message': "'limit' debe ser un entero entre 1 y 100."}), 400
+
+    valid_orders = {'cedula', 'nombre', 'carrera'}
+    if raw_order not in valid_orders:
+        return jsonify({'status': 'error', 'message': f"'order' debe ser uno de: {', '.join(sorted(valid_orders))}."}), 400
+
+    ascending = raw_asc.lower() != 'false'
+
+    result = get_students_by_period(period_code, init, limit, raw_order, ascending, carrera, nombre)
+
+    if result is None:
+        return jsonify({'status': 'error', 'message': f"Período académico '{period_code}' no encontrado."}), 404
+
+    return jsonify({'status': 'success', 'message': 'Students list.', 'data': result}), 200
+
 
 ###
 #

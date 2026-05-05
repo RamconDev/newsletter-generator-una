@@ -248,6 +248,29 @@ def get_student_data_from_db(target_cedula, mode="exact", period_filter=None):
             return _format_student_data(student, grades=grades)
         return _format_student_data(student)
 
+def get_students_by_period(period_code, init, limit, order, ascending, carrera, nombre):
+    period = AcademicPeriodRepository.find_by_code(period_code)
+    if not period:
+        return None
+
+    students, total = StudentRepository.find_by_period_paginated(
+        period_code, init, limit, order, ascending, carrera, nombre
+    )
+    return {
+        "students": [
+            {
+                "cedula": s.identification,
+                "nombre": s.full_name,
+                "carrera": s.major.code,
+            }
+            for s in students
+        ],
+        "total": total,
+        "init": init,
+        "limit": limit,
+    }
+
+
 def get_all_academic_periods():
     periods = AcademicPeriodRepository.get_all()
     return [{"id": p.id, "code": p.code} for p in periods]
