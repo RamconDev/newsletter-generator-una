@@ -2,10 +2,23 @@
 Repository Layer for Reports
 Encapsulates all database access logic for academic models.
 Follows Single Responsibility Principle: each repository handles one model.
+
+NOTE: create/update methods use flush() instead of commit() so the calling
+service controls the transaction boundary with a single commit.
 """
+
+from datetime import datetime
+
+from sqlalchemy import asc as asc_fn, desc as desc_fn
+from sqlalchemy.orm import joinedload
 
 from app.extensions import db
 from app.models import Subject, Major, Student, Grade, AcademicPeriod
+
+
+def _escape_like(value: str) -> str:
+    """Escape LIKE special characters to prevent wildcard injection."""
+    return value.replace('\\', '\\\\').replace('%', r'\%').replace('_', r'\_')
 
 
 class SubjectRepository:
@@ -13,15 +26,13 @@ class SubjectRepository:
 
     @staticmethod
     def find_by_code(code: str) -> Subject:
-        """Find subject by code, returns None if not found."""
         return Subject.query.filter_by(code=code).first()
 
     @staticmethod
     def create(code: str, name: str) -> Subject:
-        """Create and persist a new subject."""
         subject = Subject(code=code, name=name)
         db.session.add(subject)
-        db.session.commit()
+        db.session.flush()
         return subject
 
 
@@ -30,15 +41,13 @@ class MajorRepository:
 
     @staticmethod
     def find_by_code(code: str) -> Major:
-        """Find major by code, returns None if not found."""
         return Major.query.filter_by(code=code).first()
 
     @staticmethod
     def create(code: str) -> Major:
-        """Create and persist a new major."""
         major = Major(code=code)
         db.session.add(major)
-        db.session.commit()
+        db.session.flush()
         return major
 
 
@@ -47,29 +56,81 @@ class StudentRepository:
 
     @staticmethod
     def find_by_identification(identification: str) -> Student:
-        """Find student by identification (cédula), returns None if not found."""
-        return Student.query.filter_by(identification=identification).first()
+        return (
+            Student.query
+            .options(
+                joinedload(Student.grades).joinedload(Grade.subject),
+                joinedload(Student.grades).joinedload(Grade.academic_period),
+            )
+            .filter_by(identification=identification)
+            .first()
+        )
 
     @staticmethod
     def find_by_id(student_id: int) -> Student:
-        """Find student by ID, returns None if not found."""
         return db.session.get(Student, student_id)
 
     @staticmethod
     def find_by_prefix(prefix: str) -> list:
-        """Find all students whose identification starts with prefix."""
-        return Student.query.filter(Student.identification.like(f"{prefix}%")).all()
+        escaped = _escape_like(prefix)
+        return (
+            Student.query
+            .options(
+                joinedload(Student.grades).joinedload(Grade.subject),
+                joinedload(Student.grades).joinedload(Grade.academic_period),
+            )
+            .filter(Student.identification.like(f"{escaped}%", escape='\\'))
+            .all()
+        )
+
+    @staticmethod
+    def find_by_period_paginated(
+        period_code: str,
+        init: int,
+        limit: int,
+        order: str,
+        ascending: bool,
+        carrera: str | None,
+        nombre: str | None,
+    ) -> tuple[list, int]:
+        order_map = {
+            "cedula": Student.identification,
+            "nombre": Student.full_name,
+            "carrera": Major.code,
+        }
+        col = order_map.get(order, Student.full_name)
+
+        query = (
+            db.session.query(Student)
+            .join(Major, Student.major_id == Major.id)
+            .join(Grade, Grade.student_id == Student.id)
+            .join(AcademicPeriod, Grade.academic_period_id == AcademicPeriod.id)
+            .filter(AcademicPeriod.code == period_code)
+            .options(joinedload(Student.major))
+            .distinct()
+        )
+
+        if carrera:
+            query = query.filter(Major.code == carrera)
+        if nombre:
+            escaped = _escape_like(nombre)
+            query = query.filter(Student.full_name.ilike(f"%{escaped}%", escape='\\'))
+
+        query = query.order_by(asc_fn(col) if ascending else desc_fn(col))
+
+        total = query.count()
+        students = query.offset(init).limit(limit).all()
+        return students, total
 
     @staticmethod
     def create(identification: str, full_name: str, major_id: int) -> Student:
-        """Create and persist a new student."""
         student = Student(
             identification=identification,
             full_name=full_name,
-            major_id=major_id
+            major_id=major_id,
         )
         db.session.add(student)
-        db.session.commit()
+        db.session.flush()
         return student
 
 
@@ -78,36 +139,84 @@ class AcademicPeriodRepository:
 
     @staticmethod
     def find_by_code(code: str) -> AcademicPeriod:
-        """Find academic period by code, returns None if not found."""
         return AcademicPeriod.query.filter_by(code=code).first()
 
     @staticmethod
-    def create(code: str) -> AcademicPeriod:
-        """Create and persist a new academic period."""
-        period = AcademicPeriod(code=code)
+    def create(
+        code: str,
+        uploaded_by_id: int | None = None,
+        uploaded_at: datetime | None = None,
+        source_file: str | None = None,
+    ) -> AcademicPeriod:
+        period = AcademicPeriod(
+            code=code,
+            uploaded_by_id=uploaded_by_id,
+            uploaded_at=uploaded_at,
+            source_file=source_file,
+        )
         db.session.add(period)
-        db.session.commit()
+        db.session.flush()
         return period
 
     @staticmethod
     def get_all() -> list:
-        """Retrieve all academic periods."""
         return AcademicPeriod.query.all()
+
+    @staticmethod
+    def delete_period_cascade(period_code: str) -> dict | None:
+        period = AcademicPeriod.query.filter_by(code=period_code).first()
+        if not period:
+            return None
+
+        affected_student_ids = [
+            row[0]
+            for row in (
+                db.session.query(Grade.student_id)
+                .filter(Grade.academic_period_id == period.id)
+                .distinct()
+                .all()
+            )
+        ]
+
+        grades_deleted = Grade.query.filter_by(academic_period_id=period.id).delete()
+
+        orphan_ids = [
+            sid for sid in affected_student_ids
+            if not Grade.query.filter_by(student_id=sid).first()
+        ]
+        if orphan_ids:
+            Student.query.filter(Student.id.in_(orphan_ids)).delete(synchronize_session=False)
+
+        db.session.delete(period)
+
+        return {
+            "grades_deleted": grades_deleted,
+            "students_deleted": len(orphan_ids),
+        }
 
 
 class GradeRepository:
     """Repository for Grade (Nota) operations."""
 
     @staticmethod
+    def find_by_student_and_period(student_id: int, period_code: str) -> list:
+        return (
+            Grade.query
+            .options(joinedload(Grade.subject), joinedload(Grade.academic_period))
+            .join(AcademicPeriod, Grade.academic_period_id == AcademicPeriod.id)
+            .filter(
+                Grade.student_id == student_id,
+                AcademicPeriod.code == period_code,
+            )
+            .all()
+        )
+
+    @staticmethod
     def find_existing(student_id: int, subject_id: int, academic_period_id: int = None) -> Grade:
-        """
-        Find existing grade for a student-subject-period combination.
-        Returns None if not found.
-        """
         return Grade.query.filter_by(
             student_id=student_id,
             subject_id=subject_id,
-            academic_period_id=academic_period_id
+            academic_period_id=academic_period_id,
         ).first()
 
     @staticmethod
@@ -116,24 +225,25 @@ class GradeRepository:
         condition: str,
         student_id: int,
         subject_id: int,
-        academic_period_id: int = None
+        academic_period_id: int = None,
+        absent: bool = False,
     ) -> Grade:
-        """Create and persist a new grade."""
         grade = Grade(
             final_score=final_score,
             condition=condition,
             student_id=student_id,
             subject_id=subject_id,
-            academic_period_id=academic_period_id
+            academic_period_id=academic_period_id,
+            absent=absent,
         )
         db.session.add(grade)
-        db.session.commit()
+        db.session.flush()
         return grade
 
     @staticmethod
-    def update(grade: Grade, final_score: str, condition: str) -> Grade:
-        """Update an existing grade."""
+    def update(grade: Grade, final_score: str, condition: str, absent: bool = False) -> Grade:
         grade.final_score = final_score
         grade.condition = condition
-        db.session.commit()
+        grade.absent = absent
+        db.session.flush()
         return grade
