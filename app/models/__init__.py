@@ -80,6 +80,15 @@ class AcademicPeriod(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     code = db.Column(db.String(20), unique=True, nullable=False)
+    uploaded_by_id = db.Column(
+        db.Integer,
+        db.ForeignKey('users.id', ondelete='SET NULL'),
+        nullable=True,
+    )
+    uploaded_at = db.Column(db.DateTime, nullable=True)
+    source_file = db.Column(db.String(255), nullable=True)
+
+    uploaded_by = db.relationship('User', foreign_keys=[uploaded_by_id])
 
     def __str__(self):
         return f"Academic Period: {self.code}"
@@ -88,6 +97,9 @@ class AcademicPeriod(db.Model):
         return {
             'id': self.id,
             'code': self.code,
+            'uploaded_by_id': self.uploaded_by_id,
+            'uploaded_at': self.uploaded_at.isoformat() if self.uploaded_at else None,
+            'source_file': self.source_file,
         }
 
 ###

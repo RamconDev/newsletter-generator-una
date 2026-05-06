@@ -1,5 +1,6 @@
 import logging
 import os
+from datetime import datetime
 from pathlib import Path
 
 from flask import current_app
@@ -65,7 +66,12 @@ def delete_report(filename: str) -> bool:
     return False
 
 
-def process_and_save_report(file_name: str, encoding: str = 'latin-1') -> bool:
+def process_and_save_report(
+    file_name: str,
+    encoding: str = 'latin-1',
+    uploaded_by_id: int | None = None,
+    source_file: str | None = None,
+) -> bool:
     file_path = get_path_data() / file_name
     try:
         parsed_grades = parse_report(file_path, encoding=encoding)
@@ -79,7 +85,12 @@ def process_and_save_report(file_name: str, encoding: str = 'latin-1') -> bool:
             if record.period_code:
                 period = AcademicPeriodRepository.find_by_code(record.period_code)
                 if not period:
-                    period = AcademicPeriodRepository.create(record.period_code)
+                    period = AcademicPeriodRepository.create(
+                        record.period_code,
+                        uploaded_by_id=uploaded_by_id,
+                        uploaded_at=datetime.utcnow(),
+                        source_file=source_file,
+                    )
 
             major = MajorRepository.find_by_code(record.carrera_codigo)
             if not major:
@@ -209,4 +220,17 @@ def get_students_by_period(
 
 def get_all_academic_periods() -> list[dict]:
     periods = AcademicPeriodRepository.get_all()
-    return [{"id": p.id, "code": p.code} for p in periods]
+    return [p.to_dict() for p in periods]
+
+
+def delete_academic_period(period_code: str) -> dict | None:
+    result = AcademicPeriodRepository.delete_period_cascade(period_code)
+    if result is None:
+        return None
+    try:
+        db.session.commit()
+    except SQLAlchemyError as e:
+        db.session.rollback()
+        logger.error("Database error deleting period '%s': %s", period_code, e)
+        raise
+    return result

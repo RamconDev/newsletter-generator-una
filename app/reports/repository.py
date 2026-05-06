@@ -7,6 +7,8 @@ NOTE: create/update methods use flush() instead of commit() so the calling
 service controls the transaction boundary with a single commit.
 """
 
+from datetime import datetime
+
 from sqlalchemy import asc as asc_fn, desc as desc_fn
 from sqlalchemy.orm import joinedload
 
@@ -140,8 +142,18 @@ class AcademicPeriodRepository:
         return AcademicPeriod.query.filter_by(code=code).first()
 
     @staticmethod
-    def create(code: str) -> AcademicPeriod:
-        period = AcademicPeriod(code=code)
+    def create(
+        code: str,
+        uploaded_by_id: int | None = None,
+        uploaded_at: datetime | None = None,
+        source_file: str | None = None,
+    ) -> AcademicPeriod:
+        period = AcademicPeriod(
+            code=code,
+            uploaded_by_id=uploaded_by_id,
+            uploaded_at=uploaded_at,
+            source_file=source_file,
+        )
         db.session.add(period)
         db.session.flush()
         return period
@@ -149,6 +161,38 @@ class AcademicPeriodRepository:
     @staticmethod
     def get_all() -> list:
         return AcademicPeriod.query.all()
+
+    @staticmethod
+    def delete_period_cascade(period_code: str) -> dict | None:
+        period = AcademicPeriod.query.filter_by(code=period_code).first()
+        if not period:
+            return None
+
+        affected_student_ids = [
+            row[0]
+            for row in (
+                db.session.query(Grade.student_id)
+                .filter(Grade.academic_period_id == period.id)
+                .distinct()
+                .all()
+            )
+        ]
+
+        grades_deleted = Grade.query.filter_by(academic_period_id=period.id).delete()
+
+        orphan_ids = [
+            sid for sid in affected_student_ids
+            if not Grade.query.filter_by(student_id=sid).first()
+        ]
+        if orphan_ids:
+            Student.query.filter(Student.id.in_(orphan_ids)).delete(synchronize_session=False)
+
+        db.session.delete(period)
+
+        return {
+            "grades_deleted": grades_deleted,
+            "students_deleted": len(orphan_ids),
+        }
 
 
 class GradeRepository:

@@ -20,8 +20,9 @@
 
 ### Reports
 - [POST `/api/v1/reports` — Subir reporte](#post-apiv1reports--upload-report-file)
-- [GET `/api/v1/reports` — Listar reportes](#get-apiv1reports--list-uploaded-reports)
+- [GET `/api/v1/reports` — Listar períodos académicos](#get-apiv1reports--list-academic-periods)
 - [GET `/api/v1/academic-periods` — Periodos académicos](#get-apiv1academic-periods--list-academic-periods)
+- [DELETE `/api/v1/academic-periods/:period_code` — Eliminar período](#delete-apiv1academic-periodsperiod_code--delete-academic-period)
 - [GET `/api/v1/academic-periods/:period_code/students` — Listar estudiantes por período](#get-apiv1academic-periodsperiod_codestudents--list-students-by-period)
 - [GET `/api/v1/students/:identification` — Buscar estudiante](#get-apiv1studentsidentification--search-student-by-cédula)
 
@@ -325,12 +326,14 @@ curl -X DELETE http://127.0.0.1:5000/api/v1/auth/user/1/role/Admin
 
 ### POST `/api/v1/reports` — Upload report file
 
+**Roles**: `Admin`, `Editor`
+
 Uploads, validates, and processes a `.REP` academic report file. The file must:
 - Have `.rep` extension
 - Be under 5 MB
 - Contain `"UNIVERSIDAD NACIONAL ABIERTA"` in the first 256 bytes (plain text, `latin-1` encoded)
 
-The server extracts student, subject, grade, major, and academic period data and persists them to the database.
+The server extracts student, subject, grade, major, and academic period data and persists them to the database. When a new academic period is created, the authenticated user's ID, the upload timestamp, and the source filename are recorded on the period (`uploaded_by_id`, `uploaded_at`, `source_file`). If the period already existed from a previous upload, the original uploader and filename are preserved.
 
 **Request**: `multipart/form-data`
 
@@ -379,45 +382,142 @@ curl -X POST http://127.0.0.1:5000/api/v1/reports \
 
 ---
 
-### GET `/api/v1/reports` — List uploaded reports
+### GET `/api/v1/reports` — List academic periods
 
-Returns the filenames of all `.REP` files stored in the `data/` directory.
+**Roles**: `Admin`
 
-```bash
-curl http://127.0.0.1:5000/api/v1/reports
-```
-
-**Response `200`**
-```json
-{
-  "name_files": ["reporte_2023-1.rep", "reporte_2023-2.rep"]
-}
-```
-
----
-
-### GET `/api/v1/academic-periods` — List academic periods
-
-Returns all academic periods found in the database (populated after uploading reports).
+Returns all academic periods stored in the database. The `id` field is excluded from each record.
 
 ```bash
-curl http://127.0.0.1:5000/api/v1/academic-periods
+curl http://127.0.0.1:5000/api/v1/reports \
+  -H "Authorization: Bearer <token>"
 ```
 
 **Response `200`**
 ```json
 {
   "status": "success",
-  "message": "Academic periods list.",
+  "message": "Listado de períodos académicos.",
   "data": {
-    "academic_periods": ["2023-1", "2023-2", "2024-1"]
+    "academic_periods": [
+      {
+        "code": "2023-1",
+        "uploaded_by_id": 3,
+        "uploaded_at": "2026-05-05T14:30:00",
+        "source_file": "reporte_2023-1.rep"
+      },
+      {
+        "code": "2023-2",
+        "uploaded_by_id": null,
+        "uploaded_at": null,
+        "source_file": null
+      }
+    ]
   }
 }
 ```
 
+**Response `403`** — insufficient role
+```json
+{ "status": "error", "code": "ACCESO_DENEGADO", "message": "Acceso denegado." }
+```
+
+---
+
+### GET `/api/v1/academic-periods` — List academic periods
+
+**Roles**: `Admin`, `Editor`, `Viewer`
+
+Returns all academic periods found in the database (populated after uploading reports).
+
+```bash
+curl http://127.0.0.1:5000/api/v1/academic-periods \
+  -H "Authorization: Bearer <token>"
+```
+
+**Response `200`**
+```json
+{
+  "status": "success",
+  "message": "Períodos académicos.",
+  "data": {
+    "academic_periods": [
+      {
+        "id": 1,
+        "code": "2023-1",
+        "uploaded_by_id": 3,
+        "uploaded_at": "2026-05-05T14:30:00",
+        "source_file": "reporte_2023-1.rep"
+      },
+      {
+        "id": 2,
+        "code": "2023-2",
+        "uploaded_by_id": null,
+        "uploaded_at": null,
+        "source_file": null
+      }
+    ]
+  }
+}
+```
+
+> `uploaded_by_id` is `null` for periods created before tracking was added, and for periods where `academic_period_id` was already set in a prior upload.
+
 **Response `500`** — unexpected error
 ```json
-{ "status": "error", "message": "Error al obtener los periodos académicos: <detail>" }
+{ "status": "error", "message": "Error al obtener los períodos académicos." }
+```
+
+---
+
+### DELETE `/api/v1/academic-periods/:period_code` — Delete academic period
+
+**Roles**: `Admin`
+
+Deletes an academic period and all data it contains in cascade:
+1. All grades with `academic_period_id` matching the period are deleted.
+2. Students left with no remaining grades anywhere in the system are also deleted.
+3. The academic period record itself is deleted.
+
+> This operation is irreversible. Students and subjects shared with other periods are **not** affected.
+
+**Path params**
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `period_code` | string | Academic period code (e.g. `2023-1`) |
+
+```bash
+curl -X DELETE http://127.0.0.1:5000/api/v1/academic-periods/2023-1 \
+  -H "Authorization: Bearer <token>"
+```
+
+**Response `200`**
+```json
+{
+  "status": "success",
+  "message": "Período '2023-1' eliminado correctamente.",
+  "data": {
+    "period_code": "2023-1",
+    "grades_deleted": 142,
+    "students_deleted": 38
+  }
+}
+```
+
+**Response `404`** — period not found
+```json
+{ "status": "error", "message": "Período académico '2023-1' no encontrado." }
+```
+
+**Response `403`** — insufficient role
+```json
+{ "status": "error", "code": "ACCESO_DENEGADO", "message": "Acceso denegado." }
+```
+
+**Response `500`** — unexpected error
+```json
+{ "status": "error", "message": "Error al eliminar el período académico." }
 ```
 
 ---

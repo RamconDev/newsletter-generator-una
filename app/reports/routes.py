@@ -5,14 +5,14 @@ from flask import request, jsonify, current_app
 from werkzeug.utils import secure_filename
 
 from app.errors import api_error, api_success
-from app.auth.jwt_utils import require_auth, require_role
+from app.auth.jwt_utils import require_auth, require_role, current_user_id
 from app.reports import reports_bp as report
 from app.reports.services import (
-    get_reports_list,
     get_student_data_from_db,
     get_students_by_period,
     process_and_save_report,
     get_all_academic_periods,
+    delete_academic_period,
 )
 
 logger = logging.getLogger(__name__)
@@ -65,7 +65,7 @@ def report_add():
         logger.exception("Error saving uploaded file: %s", filename)
         return api_error("ERROR_GUARDADO", "No se pudo guardar el archivo en disco.", http_status=500)
 
-    exito = process_and_save_report(filename)
+    exito = process_and_save_report(filename, uploaded_by_id=current_user_id(), source_file=filename)
 
     if not exito:
         try:
@@ -87,9 +87,11 @@ def report_add():
 #
 ###
 @report.route("/api/v1/reports", methods=['GET'])
-@require_role('Admin', 'Editor', 'Viewer')
+@require_role('Admin')
 def reports_get():
-    return api_success(data={"files": get_reports_list()}, mensaje="Listado de reportes.")
+    periods = get_all_academic_periods()
+    data = [{k: v for k, v in p.items() if k != 'id'} for p in periods]
+    return api_success(data={"academic_periods": data}, mensaje="Listado de períodos académicos.")
 
 
 ###
@@ -152,6 +154,38 @@ def students_by_period(period_code):
         return api_error("PERIODO_NO_ENCONTRADO", f"Período académico '{period_code}' no encontrado.", http_status=404)
 
     return api_success(data=result, mensaje="Listado de estudiantes.")
+
+
+###
+#
+# ✅ DELETE ACADEMIC PERIOD (cascade: grades + orphan students)
+#
+###
+@report.route("/api/v1/academic-periods/<string:period_code>", methods=['DELETE'])
+@require_role('Admin')
+def academic_period_delete(period_code):
+    try:
+        result = delete_academic_period(period_code)
+    except Exception:
+        logger.exception("Error deleting academic period: %s", period_code)
+        return api_error("ERROR_INTERNO", "Error al eliminar el período académico.", http_status=500)
+
+    if result is None:
+        return api_error(
+            "PERIODO_NO_ENCONTRADO",
+            f"Período académico '{period_code}' no encontrado.",
+            http_status=404,
+        )
+
+    return api_success(
+        data={
+            "period_code": period_code,
+            "grades_deleted": result["grades_deleted"],
+            "students_deleted": result["students_deleted"],
+        },
+        mensaje=f"Período '{period_code}' eliminado correctamente.",
+        http_status=200,
+    )
 
 
 ###

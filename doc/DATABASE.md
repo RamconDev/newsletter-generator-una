@@ -70,8 +70,11 @@ CREATE TABLE subjects (
 );
 
 CREATE TABLE academic_periods (
-    id   SERIAL PRIMARY KEY,
-    code VARCHAR(20) NOT NULL UNIQUE
+    id             SERIAL PRIMARY KEY,
+    code           VARCHAR(20) NOT NULL UNIQUE,
+    uploaded_by_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    uploaded_at    TIMESTAMP,
+    source_file    VARCHAR(255)
 );
 
 CREATE TABLE grades (
@@ -124,7 +127,11 @@ CREATE INDEX idx_users_email    ON users(email);
 roles ──────────────┐
                     │ (M:N via roles_users)
 users ──────────────┘
-
+  │
+  │ uploaded_by_id (SET NULL on delete)
+  ▼
+academic_periods ───┐
+                    │
 majors ──── students ──── grades ──── subjects
                     └──────────────── academic_periods
 ```
