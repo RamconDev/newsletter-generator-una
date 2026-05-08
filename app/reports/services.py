@@ -1,6 +1,6 @@
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from flask import current_app
@@ -34,19 +34,6 @@ def get_reports_list() -> list[str]:
     except OSError:
         logger.exception("Error listing report files")
         return []
-
-
-def get_report(file_name: str, encoding: str = "latin-1"):
-    path = get_path_data()
-    file_path = path / file_name
-    try:
-        if not file_path.exists() or not file_path.is_file():
-            return None
-        with open(file_path, 'r', encoding=encoding) as f:
-            return f.read()
-    except OSError:
-        logger.exception("Error reading report file: %s", file_name)
-        return None
 
 
 def add_report_to_list(archive) -> bool:
@@ -88,7 +75,7 @@ def process_and_save_report(
                     period = AcademicPeriodRepository.create(
                         record.period_code,
                         uploaded_by_id=uploaded_by_id,
-                        uploaded_at=datetime.utcnow(),
+                        uploaded_at=datetime.now(timezone.utc),
                         source_file=source_file,
                     )
 

@@ -28,6 +28,10 @@ class BaseConfig:
     JWT_EXP_HOURS = int(os.getenv("JWT_EXP_HOURS", 1))
     JWT_REFRESH_EXP_HOURS = int(os.getenv("JWT_REFRESH_EXP_HOURS", JWT_EXP_HOURS * 2))
 
+    # URL prefix
+    API_PREFIX  = os.getenv("API_PREFIX",  "/api")
+    API_VERSION = os.getenv("API_VERSION", "v1")
+
     # File report settings
     UPLOAD_FOLDER = os.getenv("UPLOAD_FOLDER", "data")
     MAX_CONTENT_LENGTH = int(os.getenv("MAX_CONTENT_LENGTH", 16 * 1024 * 1024))

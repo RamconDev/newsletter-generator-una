@@ -1,7 +1,8 @@
 import logging
 import os
+from pathlib import Path
 
-from flask import request, jsonify, current_app
+from flask import request, current_app
 from werkzeug.utils import secure_filename
 
 from app.errors import api_error, api_success
@@ -27,7 +28,7 @@ def allowed_file(filename: str) -> bool:
 # ✅ ADD NEW REPORT
 #
 ###
-@report.route("/api/v1/reports", methods=['POST'])
+@report.route("/reports", methods=['POST'])
 @require_role('Admin', 'Editor')
 def report_add():
     if 'file' not in request.files:
@@ -57,10 +58,14 @@ def report_add():
         return api_error("ARCHIVO_CORRUPTO", "El archivo parece estar dañado o no es texto plano.", campo="file")
 
     filename = secure_filename(file.filename)
-    save_path = os.path.join(current_app.config['UPLOAD_FOLDER'], filename)
+    upload_dir = Path(current_app.config['UPLOAD_FOLDER']).resolve()
+    save_path = (upload_dir / filename).resolve()
+
+    if not str(save_path).startswith(str(upload_dir)):
+        return api_error("ARCHIVO_INVALIDO", "Nombre de archivo inválido.", campo="file")
 
     try:
-        file.save(save_path)
+        file.save(str(save_path))
     except OSError:
         logger.exception("Error saving uploaded file: %s", filename)
         return api_error("ERROR_GUARDADO", "No se pudo guardar el archivo en disco.", http_status=500)
@@ -77,7 +82,7 @@ def report_add():
     return api_success(
         data={"filename": filename},
         mensaje="Archivo cargado, validado y guardado correctamente.",
-        http_status=200,
+        http_status=201,
     )
 
 
@@ -86,7 +91,7 @@ def report_add():
 # ✅ LIST REPORTS
 #
 ###
-@report.route("/api/v1/reports", methods=['GET'])
+@report.route("/reports", methods=['GET'])
 @require_role('Admin')
 def reports_get():
     periods = get_all_academic_periods()
@@ -99,7 +104,7 @@ def reports_get():
 # ✅ ALL ACADEMIC PERIODS LIST
 #
 ###
-@report.route("/api/v1/academic-periods", methods=['GET'])
+@report.route("/academic-periods", methods=['GET'])
 @require_role('Admin', 'Editor', 'Viewer')
 def academic_periods_get():
     try:
@@ -115,7 +120,7 @@ def academic_periods_get():
 # ✅ STUDENTS BY ACADEMIC PERIOD (paginated, filtered, ordered)
 #
 ###
-@report.route("/api/v1/academic-periods/<string:period_code>/students", methods=['GET'])
+@report.route("/academic-periods/<string:period_code>/students", methods=['GET'])
 @require_role('Admin', 'Editor', 'Viewer')
 def students_by_period(period_code):
     raw_init  = request.args.get('init',  '0')
@@ -161,7 +166,7 @@ def students_by_period(period_code):
 # ✅ DELETE ACADEMIC PERIOD (cascade: grades + orphan students)
 #
 ###
-@report.route("/api/v1/academic-periods/<string:period_code>", methods=['DELETE'])
+@report.route("/academic-periods/<string:period_code>", methods=['DELETE'])
 @require_role('Admin')
 def academic_period_delete(period_code):
     try:
@@ -184,7 +189,6 @@ def academic_period_delete(period_code):
             "students_deleted": result["students_deleted"],
         },
         mensaje=f"Período '{period_code}' eliminado correctamente.",
-        http_status=200,
     )
 
 
@@ -193,7 +197,7 @@ def academic_period_delete(period_code):
 # ✅ STUDENT SEARCH BY IDENTIFICATION
 #
 ###
-@report.route("/api/v1/students/<string:identification>", methods=['GET'])
+@report.route("/students/<string:identification>", methods=['GET'])
 @require_role('Admin', 'Editor', 'Viewer')
 def student_search(identification):
     period_filter = request.args.get('period')

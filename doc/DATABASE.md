@@ -1,8 +1,8 @@
 # Database — PostgreSQL DDL
 
-Schema completo del proyecto. El orden de creación respeta las dependencias de foreign keys.
-
-> **Nota**: si usas Flask-Migrate (`flask db upgrade`) no necesitas correr este DDL manualmente — Alembic genera y aplica las migraciones automáticamente. Este archivo sirve como referencia y para crear la DB desde cero en un entorno limpio.
+Schema autoritativo del proyecto. El DBA aplica este archivo directamente.
+Todo cambio de esquema se coordina actualizando este documento primero.
+El orden de creación respeta las dependencias de foreign keys.
 
 ---
 
@@ -47,6 +47,13 @@ CREATE TABLE roles_users (
     PRIMARY KEY (user_id, role_id)
 );
 
+CREATE TABLE revoked_tokens (
+    id         SERIAL PRIMARY KEY,
+    jti        VARCHAR(36) NOT NULL,
+    revoked_at TIMESTAMP   NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_revoked_tokens_jti UNIQUE (jti)
+);
+
 -- ─────────────────────────────────────────
 -- ACADEMIC DOMAIN
 -- ─────────────────────────────────────────
@@ -81,9 +88,12 @@ CREATE TABLE grades (
     id                 SERIAL PRIMARY KEY,
     final_score        VARCHAR(20) NOT NULL,   -- puede ser "No Presento"
     condition          VARCHAR(20),             -- e.g. 'RG', 'RP'
+    absent             BOOLEAN NOT NULL DEFAULT FALSE,
     student_id         INTEGER NOT NULL REFERENCES students(id),
     subject_id         INTEGER NOT NULL REFERENCES subjects(id),
-    academic_period_id INTEGER REFERENCES academic_periods(id)
+    academic_period_id INTEGER REFERENCES academic_periods(id),
+    CONSTRAINT uq_grade_student_subject_period
+        UNIQUE (student_id, subject_id, academic_period_id)
 );
 ```
 
@@ -104,19 +114,24 @@ INSERT INTO roles (name, description) VALUES
 
 ---
 
-## 4. Índices recomendados
+## 4. Índices
 
 ```sql
 -- Búsquedas frecuentes de estudiantes por cédula
 CREATE INDEX idx_students_identification ON students(identification);
+CREATE INDEX idx_students_major_id       ON students(major_id);
 
--- Búsquedas de notas por estudiante y por período
+-- Búsquedas de notas por estudiante, asignatura y por período
 CREATE INDEX idx_grades_student_id         ON grades(student_id);
+CREATE INDEX idx_grades_subject_id         ON grades(subject_id);
 CREATE INDEX idx_grades_academic_period_id ON grades(academic_period_id);
 
 -- Login / lookup de usuario por username y email
 CREATE INDEX idx_users_username ON users(username);
 CREATE INDEX idx_users_email    ON users(email);
+
+-- Lookup rápido de tokens revocados por JTI
+CREATE UNIQUE INDEX ix_revoked_tokens_jti ON revoked_tokens(jti);
 ```
 
 ---
@@ -134,4 +149,36 @@ academic_periods ───┐
                     │
 majors ──── students ──── grades ──── subjects
                     └──────────────── academic_periods
+
+revoked_tokens  (standalone — almacena JTIs de tokens JWT invalidados)
+```
+
+---
+
+## Apéndice: actualizar una BD existente
+
+Aplicar solo si la BD fue creada con el esquema anterior (pre-2026-05-07).
+
+```sql
+-- Columna absent en grades
+ALTER TABLE grades ADD COLUMN IF NOT EXISTS absent BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- Unique constraint en grades
+ALTER TABLE grades
+    ADD CONSTRAINT IF NOT EXISTS uq_grade_student_subject_period
+        UNIQUE (student_id, subject_id, academic_period_id);
+
+-- Índice faltante en grades
+CREATE INDEX IF NOT EXISTS idx_grades_subject_id ON grades(subject_id);
+CREATE INDEX IF NOT EXISTS idx_students_major_id ON students(major_id);
+
+-- Tabla y índice de tokens revocados
+CREATE TABLE IF NOT EXISTS revoked_tokens (
+    id         SERIAL PRIMARY KEY,
+    jti        VARCHAR(36) NOT NULL,
+    revoked_at TIMESTAMP   NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_revoked_tokens_jti UNIQUE (jti)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS ix_revoked_tokens_jti ON revoked_tokens(jti);
 ```

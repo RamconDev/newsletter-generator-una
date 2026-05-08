@@ -9,7 +9,7 @@ service controls the transaction boundary with a single commit.
 
 from datetime import datetime
 
-from sqlalchemy import asc as asc_fn, desc as desc_fn
+from sqlalchemy import asc as asc_fn, desc as desc_fn, func
 from sqlalchemy.orm import joinedload
 
 from app.extensions import db
@@ -100,7 +100,26 @@ class StudentRepository:
         }
         col = order_map.get(order, Student.full_name)
 
-        query = (
+        # Base query without eager loading — used for counting
+        base_query = (
+            db.session.query(Student.id)
+            .join(Major, Student.major_id == Major.id)
+            .join(Grade, Grade.student_id == Student.id)
+            .join(AcademicPeriod, Grade.academic_period_id == AcademicPeriod.id)
+            .filter(AcademicPeriod.code == period_code)
+            .distinct()
+        )
+
+        if carrera:
+            base_query = base_query.filter(Major.code == carrera)
+        if nombre:
+            escaped = _escape_like(nombre)
+            base_query = base_query.filter(Student.full_name.ilike(f"%{escaped}%", escape='\\'))
+
+        total = db.session.query(func.count()).select_from(base_query.subquery()).scalar()
+
+        # Data query with eager loading for the page slice
+        data_query = (
             db.session.query(Student)
             .join(Major, Student.major_id == Major.id)
             .join(Grade, Grade.student_id == Student.id)
@@ -111,15 +130,12 @@ class StudentRepository:
         )
 
         if carrera:
-            query = query.filter(Major.code == carrera)
+            data_query = data_query.filter(Major.code == carrera)
         if nombre:
             escaped = _escape_like(nombre)
-            query = query.filter(Student.full_name.ilike(f"%{escaped}%", escape='\\'))
+            data_query = data_query.filter(Student.full_name.ilike(f"%{escaped}%", escape='\\'))
 
-        query = query.order_by(asc_fn(col) if ascending else desc_fn(col))
-
-        total = query.count()
-        students = query.offset(init).limit(limit).all()
+        students = data_query.order_by(asc_fn(col) if ascending else desc_fn(col)).offset(init).limit(limit).all()
         return students, total
 
     @staticmethod

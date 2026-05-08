@@ -1,4 +1,5 @@
 import logging
+import uuid
 from datetime import datetime, timezone, timedelta
 from functools import wraps
 
@@ -11,10 +12,13 @@ logger = logging.getLogger(__name__)
 
 
 def _build_token(user_payload: dict, token_type: str, exp_hours: int) -> str:
+    now = datetime.now(timezone.utc)
     payload = {
         **user_payload,
         'type': token_type,
-        'exp': datetime.now(timezone.utc) + timedelta(hours=exp_hours),
+        'jti': str(uuid.uuid4()),
+        'iat': now,
+        'exp': now + timedelta(hours=exp_hours),
     }
     return pyjwt.encode(payload, current_app.config['JWT_SECRET_KEY'], algorithm='HS256')
 
@@ -32,21 +36,28 @@ def _decode_token(token: str, expected_type: str | None = None) -> tuple[dict | 
     except pyjwt.InvalidTokenError:
         return None, api_error("TOKEN_INVALIDO", "Token inválido o malformado.", http_status=401)
 
-    if expected_type is not None:
-        token_type = payload.get('type')
-        # Tokens sin claim 'type' (emitidos antes de este cambio) se aceptan como access
-        if token_type is not None and token_type != expected_type:
-            if expected_type == 'refresh':
-                return None, api_error(
-                    "TOKEN_TIPO_INVALIDO",
-                    "Se debe enviar el refresh_token, no el access token.",
-                    http_status=400,
-                )
+    token_type = payload.get('type')
+    if token_type is None:
+        return None, api_error("TOKEN_INVALIDO", "Token inválido o malformado.", http_status=401)
+
+    if expected_type is not None and token_type != expected_type:
+        if expected_type == 'refresh':
             return None, api_error(
                 "TOKEN_TIPO_INVALIDO",
-                "El refresh token no puede usarse para autenticación.",
-                http_status=401,
+                "Se debe enviar el refresh_token, no el access token.",
+                http_status=400,
             )
+        return None, api_error(
+            "TOKEN_TIPO_INVALIDO",
+            "El refresh token no puede usarse para autenticación.",
+            http_status=401,
+        )
+
+    jti = payload.get('jti')
+    if jti:
+        from app.auth.models.revoked_token import RevokedToken
+        if RevokedToken.is_revoked(jti):
+            return None, api_error("TOKEN_REVOCADO", "El token ha sido revocado.", http_status=401)
 
     return payload, None
 
