@@ -1,7 +1,8 @@
 import logging
+import re
 from datetime import datetime, timezone
 
-from flask import request, current_app
+from flask import request, current_app, g
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.errors import api_error, api_success
@@ -13,13 +14,29 @@ from .models.role import Role
 
 logger = logging.getLogger(__name__)
 
+_EMAIL_RE = re.compile(r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$')
+
+
+def _validate_email(email: str) -> bool:
+    return bool(_EMAIL_RE.match(email.strip()))
+
+
+def _validate_password(password: str) -> tuple[bool, str]:
+    if len(password) < 8:
+        return False, "La contraseña debe tener al menos 8 caracteres."
+    if not any(c.isupper() for c in password):
+        return False, "La contraseña debe contener al menos una letra mayúscula."
+    if not any(c.isdigit() for c in password):
+        return False, "La contraseña debe contener al menos un número."
+    return True, ""
+
 
 ###
 #
 # ✅ LOGIN — público
 #
 ###
-@auth.route("/api/v1/auth/login", methods=['POST'])
+@auth.route("/auth/login", methods=['POST'])
 def user_login():
     data = request.get_json()
     if not data or not data.get('username') or not data.get('password'):
@@ -47,7 +64,7 @@ def user_login():
 # ✅ REFRESH TOKEN — público
 #
 ###
-@auth.route("/api/v1/auth/refresh-token", methods=['POST'])
+@auth.route("/auth/refresh-token", methods=['POST'])
 def token_refresh():
     data = request.get_json()
     if not data or not data.get('refresh_token'):
@@ -66,10 +83,25 @@ def token_refresh():
 
 ###
 #
+# ✅ LOGOUT — requiere auth
+#
+###
+@auth.route("/auth/logout", methods=['POST'])
+@require_auth
+def user_logout():
+    from app.auth.models.revoked_token import RevokedToken
+    jti = g.current_user.get('jti')
+    if jti:
+        RevokedToken.revoke(jti)
+    return api_success(mensaje="Sesión cerrada correctamente.")
+
+
+###
+#
 # ✅ CREATE NEW USER — Admin
 #
 ###
-@auth.route("/api/v1/auth/user", methods=['POST'])
+@auth.route("/auth/user", methods=['POST'])
 @require_role('Admin')
 def user_create():
     data = request.get_json()
@@ -80,6 +112,13 @@ def user_create():
     for field in required:
         if not data.get(field):
             return api_error("CAMPO_REQUERIDO", f"El campo '{field}' es requerido.", campo=field)
+
+    if not _validate_email(data['email']):
+        return api_error("EMAIL_INVALIDO", "El formato del email no es válido.", campo="email")
+
+    valid, msg = _validate_password(data['password'])
+    if not valid:
+        return api_error("PASSWORD_DEBIL", msg, campo="password")
 
     try:
         new_user = User(
@@ -111,7 +150,7 @@ def user_create():
 # ✅ GET ALL USERS — Admin
 #
 ###
-@auth.route("/api/v1/auth/user", methods=['GET'])
+@auth.route("/auth/user", methods=['GET'])
 @require_role('Admin')
 def user_get():
     users = db.session.execute(
@@ -129,7 +168,7 @@ def user_get():
 # ✅ GET USER BY ID — Admin o propio usuario
 #
 ###
-@auth.route("/api/v1/auth/user/<int:user_id>", methods=['GET'])
+@auth.route("/auth/user/<int:user_id>", methods=['GET'])
 @require_auth
 def user_get_id(user_id):
     if not current_user_has_role('Admin') and current_user_id() != user_id:
@@ -147,7 +186,7 @@ def user_get_id(user_id):
 # ✅ UPDATE USER — Admin o propio usuario
 #
 ###
-@auth.route("/api/v1/auth/user/<int:user_id>", methods=['PUT'])
+@auth.route("/auth/user/<int:user_id>", methods=['PUT'])
 @require_auth
 def user_update(user_id):
     if not current_user_has_role('Admin') and current_user_id() != user_id:
@@ -160,6 +199,15 @@ def user_update(user_id):
     data = request.get_json()
     if not data:
         return api_error("CUERPO_REQUERIDO", "El cuerpo de la solicitud es requerido.")
+
+    if 'email' in data and data['email']:
+        if not _validate_email(data['email']):
+            return api_error("EMAIL_INVALIDO", "El formato del email no es válido.", campo="email")
+
+    if data.get('password'):
+        valid, msg = _validate_password(data['password'])
+        if not valid:
+            return api_error("PASSWORD_DEBIL", msg, campo="password")
 
     updatable = ('firstname', 'lastname', 'email', 'phone')
     for field in updatable:
@@ -185,7 +233,7 @@ def user_update(user_id):
 # ✅ REMOVE USER — Admin
 #
 ###
-@auth.route("/api/v1/auth/user/<int:user_id>", methods=['DELETE'])
+@auth.route("/auth/user/<int:user_id>", methods=['DELETE'])
 @require_role('Admin')
 def user_delete(user_id):
     user = db.session.get(User, user_id)
@@ -208,32 +256,35 @@ def user_delete(user_id):
 # ✅ ASSIGN ROLE — Admin
 #
 ###
-@auth.route("/api/v1/auth/user/<int:user_id>/role", methods=['POST'])
+@auth.route("/auth/user/<int:user_id>/role", methods=['POST'])
 @require_role('Admin')
 def user_assign_role(user_id):
     data = request.get_json()
     if not data or not data.get('role'):
         return api_error("CAMPO_REQUERIDO", "El campo 'role' es requerido.", campo="role")
 
+    role_name = data.get('role', '').strip()
+    if not role_name or len(role_name) > 100:
+        return api_error("ROL_INVALIDO", "El campo 'role' es inválido.", campo="role")
+
     user = db.session.get(User, user_id)
     if not user:
         return api_error("USUARIO_NO_ENCONTRADO", f"El usuario {user_id} no existe.", http_status=404)
 
-    role_name = data['role']
     role = Role.query.filter_by(name=role_name).first()
     if not role:
-        return api_error("ROL_NO_ENCONTRADO", f"El rol '{role_name}' no existe.", http_status=404, campo="role")
+        return api_error("ROL_NO_ENCONTRADO", "El rol no existe.", http_status=404, campo="role")
 
     if user.has_role(role_name):
-        return api_error("ROL_YA_ASIGNADO", f"El usuario ya tiene el rol '{role_name}'.", http_status=409)
+        return api_error("ROL_YA_ASIGNADO", "El usuario ya tiene ese rol.", http_status=409)
 
     try:
         user.add_role(role)
         db.session.commit()
-        return api_success(data=user.to_dict(), mensaje="Rol asignado correctamente.")
+        return api_success(data=user.to_dict(), mensaje="Rol asignado correctamente.", http_status=201)
     except SQLAlchemyError:
         db.session.rollback()
-        logger.exception("Error assigning role '%s' to user %d", role_name, user_id)
+        logger.exception("Error assigning role to user %d", user_id)
         return api_error("ERROR_BASE_DATOS", "No se pudo asignar el rol.", http_status=500)
 
 
@@ -242,7 +293,7 @@ def user_assign_role(user_id):
 # ✅ REMOVE ROLE — Admin
 #
 ###
-@auth.route("/api/v1/auth/user/<int:user_id>/role/<string:role_name>", methods=['DELETE'])
+@auth.route("/auth/user/<int:user_id>/role/<string:role_name>", methods=['DELETE'])
 @require_role('Admin')
 def user_remove_role(user_id, role_name):
     user = db.session.get(User, user_id)
@@ -251,10 +302,19 @@ def user_remove_role(user_id, role_name):
 
     role = Role.query.filter_by(name=role_name).first()
     if not role:
-        return api_error("ROL_NO_ENCONTRADO", f"El rol '{role_name}' no existe.", http_status=404)
+        return api_error("ROL_NO_ENCONTRADO", "El rol no existe.", http_status=404)
 
     if not user.has_role(role_name):
-        return api_error("ROL_NO_ASIGNADO", f"El usuario no tiene el rol '{role_name}'.", http_status=404)
+        return api_error("ROL_NO_ASIGNADO", "El usuario no tiene ese rol.", http_status=404)
+
+    if role_name == 'Admin':
+        admin_count = User.query.join(User.roles).filter(Role.name == 'Admin').count()
+        if admin_count <= 1:
+            return api_error(
+                "OPERACION_NO_PERMITIDA",
+                "No se puede remover el último administrador del sistema.",
+                http_status=409,
+            )
 
     try:
         user.roles.remove(role)
@@ -262,5 +322,5 @@ def user_remove_role(user_id, role_name):
         return api_success(data=user.to_dict(), mensaje="Rol eliminado correctamente.")
     except SQLAlchemyError:
         db.session.rollback()
-        logger.exception("Error removing role '%s' from user %d", role_name, user_id)
+        logger.exception("Error removing role from user %d", user_id)
         return api_error("ERROR_BASE_DATOS", "No se pudo eliminar el rol.", http_status=500)

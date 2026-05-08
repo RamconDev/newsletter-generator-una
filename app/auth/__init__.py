@@ -1,6 +1,7 @@
 from .models.role import Role
 from .models.user import User
 from .models.roles_users import roles_users
+from .models.revoked_token import RevokedToken
 
 from app.extensions import db
 
@@ -12,10 +13,11 @@ login_manager = LoginManager()
 
 from . import routes
 
+
 @login_manager.user_loader
 def load_user(user_id):
-    from app.auth.models.user import User
     return User.query.get(int(user_id))
+
 
 @auth_bp.cli.command("init-roles")
 def init_roles():
