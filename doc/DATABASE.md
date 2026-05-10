@@ -77,11 +77,13 @@ CREATE TABLE subjects (
 );
 
 CREATE TABLE academic_periods (
-    id             SERIAL PRIMARY KEY,
-    code           VARCHAR(20) NOT NULL UNIQUE,
-    uploaded_by_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-    uploaded_at    TIMESTAMP,
-    source_file    VARCHAR(255)
+    id                   SERIAL PRIMARY KEY,
+    code                 VARCHAR(20) NOT NULL UNIQUE,
+    uploaded_by_id       INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    uploaded_by_email    VARCHAR(100),
+    uploaded_by_fullname VARCHAR(200),
+    uploaded_at          TIMESTAMP,
+    source_file          VARCHAR(255)
 );
 
 CREATE TABLE grades (
@@ -134,7 +136,19 @@ CREATE UNIQUE INDEX ix_revoked_tokens_jti ON revoked_tokens(jti);
 
 ---
 
-## 5. Diagrama de relaciones
+## 5. Migraciones — bases de datos existentes
+
+Aplicar en orden sobre una DB ya creada con el DDL anterior.
+
+```sql
+-- Snapshot de auditoría del usuario que subió el reporte, tomado del JWT
+ALTER TABLE academic_periods ADD COLUMN uploaded_by_email    VARCHAR(100);
+ALTER TABLE academic_periods ADD COLUMN uploaded_by_fullname VARCHAR(200);
+```
+
+---
+
+## 6. Diagrama de relaciones
 
 ```
 roles ──────────────┐

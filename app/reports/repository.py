@@ -161,12 +161,16 @@ class AcademicPeriodRepository:
     def create(
         code: str,
         uploaded_by_id: int | None = None,
+        uploaded_by_email: str | None = None,
+        uploaded_by_fullname: str | None = None,
         uploaded_at: datetime | None = None,
         source_file: str | None = None,
     ) -> AcademicPeriod:
         period = AcademicPeriod(
             code=code,
             uploaded_by_id=uploaded_by_id,
+            uploaded_by_email=uploaded_by_email,
+            uploaded_by_fullname=uploaded_by_fullname,
             uploaded_at=uploaded_at,
             source_file=source_file,
         )

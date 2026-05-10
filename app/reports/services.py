@@ -57,6 +57,8 @@ def process_and_save_report(
     file_name: str,
     encoding: str = 'latin-1',
     uploaded_by_id: int | None = None,
+    uploaded_by_email: str | None = None,
+    uploaded_by_fullname: str | None = None,
     source_file: str | None = None,
 ) -> bool:
     file_path = get_path_data() / file_name
@@ -75,6 +77,8 @@ def process_and_save_report(
                     period = AcademicPeriodRepository.create(
                         record.period_code,
                         uploaded_by_id=uploaded_by_id,
+                        uploaded_by_email=uploaded_by_email,
+                        uploaded_by_fullname=uploaded_by_fullname,
                         uploaded_at=datetime.now(timezone.utc),
                         source_file=source_file,
                     )

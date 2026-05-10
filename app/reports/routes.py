@@ -6,7 +6,7 @@ from flask import request, current_app
 from werkzeug.utils import secure_filename
 
 from app.errors import api_error, api_success
-from app.auth.jwt_utils import require_auth, require_role, current_user_id
+from app.auth.jwt_utils import require_auth, require_role, current_user_id, current_user_email, current_user_fullname
 from app.reports import reports_bp as report
 from app.reports.services import (
     get_student_data_from_db,
@@ -70,7 +70,13 @@ def report_add():
         logger.exception("Error saving uploaded file: %s", filename)
         return api_error("ERROR_GUARDADO", "No se pudo guardar el archivo en disco.", http_status=500)
 
-    exito = process_and_save_report(filename, uploaded_by_id=current_user_id(), source_file=filename)
+    exito = process_and_save_report(
+        filename,
+        uploaded_by_id=current_user_id(),
+        uploaded_by_email=current_user_email(),
+        uploaded_by_fullname=current_user_fullname(),
+        source_file=filename,
+    )
 
     if not exito:
         try:

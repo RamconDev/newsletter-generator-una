@@ -85,6 +85,8 @@ class AcademicPeriod(db.Model):
         db.ForeignKey('users.id', ondelete='SET NULL'),
         nullable=True,
     )
+    uploaded_by_email    = db.Column(db.String(100), nullable=True)
+    uploaded_by_fullname = db.Column(db.String(200), nullable=True)
     uploaded_at = db.Column(db.DateTime, nullable=True)
     source_file = db.Column(db.String(255), nullable=True)
 
@@ -98,6 +100,8 @@ class AcademicPeriod(db.Model):
             'id': self.id,
             'code': self.code,
             'uploaded_by_id': self.uploaded_by_id,
+            'uploaded_by_email': self.uploaded_by_email,
+            'uploaded_by_fullname': self.uploaded_by_fullname,
             'uploaded_at': self.uploaded_at.isoformat() if self.uploaded_at else None,
             'source_file': self.source_file,
         }
