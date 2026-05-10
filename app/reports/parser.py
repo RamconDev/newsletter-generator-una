@@ -46,6 +46,10 @@ def parse_report(file_path: Path, encoding: str = 'latin-1') -> list[ParsedGrade
                 match = _PERIOD_PATTERN.search(line)
                 if match:
                     current_period_code = match.group(1).strip()
+                if "OBJETIVO" in line and current_subject_code:
+                    found = len(_OBJECTIVE_PATTERN.findall(line))
+                    if found > 0:
+                        max_objectives = found
                 continue
 
             if "OBJETIVO" in line and current_subject_code:
