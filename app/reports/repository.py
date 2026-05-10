@@ -7,13 +7,13 @@ NOTE: create/update methods use flush() instead of commit() so the calling
 service controls the transaction boundary with a single commit.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import asc as asc_fn, desc as desc_fn, func
 from sqlalchemy.orm import joinedload
 
 from app.extensions import db
-from app.models import Subject, Major, Student, Grade, AcademicPeriod
+from app.models import Subject, Major, Student, Grade, AcademicPeriod, AcademicPeriodAudit
 
 
 def _escape_like(value: str) -> str:
@@ -161,12 +161,16 @@ class AcademicPeriodRepository:
     def create(
         code: str,
         uploaded_by_id: int | None = None,
+        uploaded_by_email: str | None = None,
+        uploaded_by_fullname: str | None = None,
         uploaded_at: datetime | None = None,
         source_file: str | None = None,
     ) -> AcademicPeriod:
         period = AcademicPeriod(
             code=code,
             uploaded_by_id=uploaded_by_id,
+            uploaded_by_email=uploaded_by_email,
+            uploaded_by_fullname=uploaded_by_fullname,
             uploaded_at=uploaded_at,
             source_file=source_file,
         )
@@ -211,6 +215,34 @@ class AcademicPeriodRepository:
         }
 
 
+class AcademicPeriodAuditRepository:
+    """Repository for AcademicPeriodAudit operations."""
+
+    @staticmethod
+    def create(
+        period_code: str,
+        operation: str,
+        user_email: str | None = None,
+        user_fullname: str | None = None,
+        operation_at: datetime | None = None,
+        source_file: str | None = None,
+        ip_address: str | None = None,
+        affected_rows: dict | None = None,
+    ) -> AcademicPeriodAudit:
+        audit = AcademicPeriodAudit(
+            period_code=period_code,
+            operation=operation,
+            user_email=user_email,
+            user_fullname=user_fullname,
+            operation_at=operation_at or datetime.now(timezone.utc),
+            source_file=source_file,
+            ip_address=ip_address,
+            affected_rows=affected_rows,
+        )
+        db.session.add(audit)
+        return audit
+
+
 class GradeRepository:
     """Repository for Grade (Nota) operations."""
 
@@ -236,30 +268,54 @@ class GradeRepository:
         ).first()
 
     @staticmethod
+    def _unpack_objectives(objectives: list[bool]) -> dict:
+        padded = (objectives + [False] * 6)[:6]
+        return {
+            'obj_1': padded[0],
+            'obj_2': padded[1],
+            'obj_3': padded[2],
+            'obj_4': padded[3],
+            'obj_5': padded[4],
+            'obj_6': padded[5],
+        }
+
+    @staticmethod
     def create(
-        final_score: str,
         condition: str,
         student_id: int,
         subject_id: int,
+        objectives: list[bool],
+        objectives_max: int,
         academic_period_id: int = None,
         absent: bool = False,
     ) -> Grade:
+        obj_fields = GradeRepository._unpack_objectives(objectives)
         grade = Grade(
-            final_score=final_score,
             condition=condition,
             student_id=student_id,
             subject_id=subject_id,
             academic_period_id=academic_period_id,
             absent=absent,
+            objectives_max=objectives_max,
+            **obj_fields,
         )
         db.session.add(grade)
         db.session.flush()
         return grade
 
     @staticmethod
-    def update(grade: Grade, final_score: str, condition: str, absent: bool = False) -> Grade:
-        grade.final_score = final_score
+    def update(
+        grade: Grade,
+        condition: str,
+        objectives: list[bool],
+        objectives_max: int,
+        absent: bool = False,
+    ) -> Grade:
+        obj_fields = GradeRepository._unpack_objectives(objectives)
         grade.condition = condition
         grade.absent = absent
+        grade.objectives_max = objectives_max
+        for k, v in obj_fields.items():
+            setattr(grade, k, v)
         db.session.flush()
         return grade

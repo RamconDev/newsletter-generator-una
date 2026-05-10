@@ -14,6 +14,23 @@ logging.basicConfig(
 )
 
 
+def _validate_db_connection(app):
+    from sqlalchemy import text
+    from sqlalchemy.exc import OperationalError, ProgrammingError
+
+    _logger = logging.getLogger(__name__)
+    try:
+        with app.app_context():
+            db.session.execute(text("SELECT 1"))
+        _logger.info("Conexión a la base de datos establecida correctamente.")
+    except (OperationalError, ProgrammingError) as e:
+        _logger.critical("No se pudo conectar a la base de datos: %s", e)
+        raise RuntimeError(
+            "No se pudo conectar a la base de datos. "
+            "Verifique DATABASE_URL, credenciales y que el servidor esté disponible."
+        ) from e
+
+
 def _validate_secrets(app):
     weak = {'secret_key', 'jwt_secret_key', ''}
     secret = app.config.get('SECRET_KEY', '')
@@ -57,6 +74,7 @@ def create_app():
         app.config.from_object(TestingConfig)
 
     db.init_app(app)
+    _validate_db_connection(app)
     from app.auth.models import User, Role, roles_users
     from app.auth.models.revoked_token import RevokedToken
     from app.models import Major, Student, Subject, Grade

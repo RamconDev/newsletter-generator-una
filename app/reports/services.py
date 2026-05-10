@@ -3,7 +3,7 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-from flask import current_app
+from flask import current_app, request
 from sqlalchemy.exc import SQLAlchemyError
 from werkzeug.utils import secure_filename
 
@@ -15,6 +15,7 @@ from app.reports.repository import (
     MajorRepository,
     StudentRepository,
     AcademicPeriodRepository,
+    AcademicPeriodAuditRepository,
     GradeRepository,
 )
 
@@ -57,6 +58,8 @@ def process_and_save_report(
     file_name: str,
     encoding: str = 'latin-1',
     uploaded_by_id: int | None = None,
+    uploaded_by_email: str | None = None,
+    uploaded_by_fullname: str | None = None,
     source_file: str | None = None,
 ) -> bool:
     file_path = get_path_data() / file_name
@@ -75,8 +78,19 @@ def process_and_save_report(
                     period = AcademicPeriodRepository.create(
                         record.period_code,
                         uploaded_by_id=uploaded_by_id,
+                        uploaded_by_email=uploaded_by_email,
+                        uploaded_by_fullname=uploaded_by_fullname,
                         uploaded_at=datetime.now(timezone.utc),
                         source_file=source_file,
+                    )
+                    AcademicPeriodAuditRepository.create(
+                        period_code=record.period_code,
+                        operation='INSERT',
+                        user_email=uploaded_by_email,
+                        user_fullname=uploaded_by_fullname,
+                        operation_at=datetime.now(timezone.utc),
+                        source_file=source_file,
+                        ip_address=request.remote_addr,
                     )
 
             major = MajorRepository.find_by_code(record.carrera_codigo)
@@ -91,15 +105,22 @@ def process_and_save_report(
             grade = GradeRepository.find_existing(student.id, subject.id, period_id)
             if not grade:
                 GradeRepository.create(
-                    record.nota_final,
-                    record.condicion,
-                    student.id,
-                    subject.id,
-                    period_id,
+                    condition=record.condicion,
+                    student_id=student.id,
+                    subject_id=subject.id,
+                    objectives=record.objectives,
+                    objectives_max=record.objectives_max,
+                    academic_period_id=period_id,
                     absent=record.absent,
                 )
             else:
-                GradeRepository.update(grade, record.nota_final, record.condicion, absent=record.absent)
+                GradeRepository.update(
+                    grade,
+                    condition=record.condicion,
+                    objectives=record.objectives,
+                    objectives_max=record.objectives_max,
+                    absent=record.absent,
+                )
 
         db.session.commit()
         logger.info("Report '%s' processed successfully (%d records).", file_name, len(parsed_grades))
@@ -136,8 +157,15 @@ def _format_student_data(student: Student, grades=None) -> dict:
             "codigo_asignatura": grade.subject.code,
             "asignatura": grade.subject.name,
             "condicion": grade.condition,
-            "nota_final": grade.final_score,
             "ausente": grade.absent,
+            "objetivos": {
+                "logrados": grade.objectives_achieved,
+                "total": grade.objectives_max,
+                "detalle": [
+                    grade.obj_1, grade.obj_2, grade.obj_3,
+                    grade.obj_4, grade.obj_5, grade.obj_6,
+                ],
+            },
         })
 
     for period_code, val in periodos_dict.items():
@@ -210,10 +238,25 @@ def get_all_academic_periods() -> list[dict]:
     return [p.to_dict() for p in periods]
 
 
-def delete_academic_period(period_code: str) -> dict | None:
+def delete_academic_period(
+    period_code: str,
+    deleted_by_email: str | None = None,
+    deleted_by_fullname: str | None = None,
+) -> dict | None:
     result = AcademicPeriodRepository.delete_period_cascade(period_code)
     if result is None:
         return None
+    AcademicPeriodAuditRepository.create(
+        period_code=period_code,
+        operation='DELETE',
+        user_email=deleted_by_email,
+        user_fullname=deleted_by_fullname,
+        ip_address=request.remote_addr,
+        affected_rows={
+            'grades_deleted': result['grades_deleted'],
+            'students_deleted': result['students_deleted'],
+        },
+    )
     try:
         db.session.commit()
     except SQLAlchemyError as e:

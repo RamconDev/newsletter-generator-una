@@ -77,18 +77,38 @@ CREATE TABLE subjects (
 );
 
 CREATE TABLE academic_periods (
-    id             SERIAL PRIMARY KEY,
-    code           VARCHAR(20) NOT NULL UNIQUE,
-    uploaded_by_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-    uploaded_at    TIMESTAMP,
-    source_file    VARCHAR(255)
+    id                   SERIAL PRIMARY KEY,
+    code                 VARCHAR(20) NOT NULL UNIQUE,
+    uploaded_by_id       INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    uploaded_by_email    VARCHAR(100),
+    uploaded_by_fullname VARCHAR(200),
+    uploaded_at          TIMESTAMP,
+    source_file          VARCHAR(255)
+);
+
+CREATE TABLE academic_periods_audit (
+    id            SERIAL PRIMARY KEY,
+    period_code   VARCHAR(20)  NOT NULL,
+    operation     VARCHAR(10)  NOT NULL,
+    user_email    VARCHAR(100),
+    user_fullname VARCHAR(200),
+    operation_at  TIMESTAMP    NOT NULL,
+    source_file   VARCHAR(255),
+    ip_address    VARCHAR(45),
+    affected_rows JSON
 );
 
 CREATE TABLE grades (
     id                 SERIAL PRIMARY KEY,
-    final_score        VARCHAR(20) NOT NULL,   -- puede ser "No Presento"
-    condition          VARCHAR(20),             -- e.g. 'RG', 'RP'
-    absent             BOOLEAN NOT NULL DEFAULT FALSE,
+    condition          VARCHAR(20),              -- RG | RP (condición real del estudiante)
+    absent             BOOLEAN NOT NULL DEFAULT FALSE,  -- TRUE si "No Presento"
+    obj_1              BOOLEAN NOT NULL DEFAULT FALSE,  -- objetivo T1 logrado
+    obj_2              BOOLEAN NOT NULL DEFAULT FALSE,
+    obj_3              BOOLEAN NOT NULL DEFAULT FALSE,
+    obj_4              BOOLEAN NOT NULL DEFAULT FALSE,
+    obj_5              BOOLEAN NOT NULL DEFAULT FALSE,
+    obj_6              BOOLEAN NOT NULL DEFAULT FALSE,
+    objectives_max     INTEGER NOT NULL DEFAULT 0,      -- máx. objetivos posibles para la asignatura
     student_id         INTEGER NOT NULL REFERENCES students(id),
     subject_id         INTEGER NOT NULL REFERENCES subjects(id),
     academic_period_id INTEGER REFERENCES academic_periods(id),
@@ -101,6 +121,8 @@ CREATE TABLE grades (
 
 ## 3. Seed data — tablas normalizadas
 
+### 3.1 Roles
+
 Solo `roles` requiere datos iniciales. El resto se puebla al subir archivos `.REP`.
 
 ```sql
@@ -109,10 +131,6 @@ INSERT INTO roles (name, description) VALUES
     ('Editor', 'Puede cargar y gestionar reportes académicos.'),
     ('Viewer', 'Solo lectura: consulta de estudiantes y períodos.');
 ```
-
-> El comando `flask --app run init-roles` hace exactamente esto desde la aplicación. Usa uno u otro, no ambos, para evitar duplicados.
-
----
 
 ## 4. Índices
 
@@ -132,11 +150,53 @@ CREATE INDEX idx_users_email    ON users(email);
 
 -- Lookup rápido de tokens revocados por JTI
 CREATE UNIQUE INDEX ix_revoked_tokens_jti ON revoked_tokens(jti);
+
+-- Consultas de auditoría por período y por rango de fechas
+CREATE INDEX idx_ap_audit_period_code  ON academic_periods_audit (period_code);
+CREATE INDEX idx_ap_audit_operation_at ON academic_periods_audit (operation_at);
 ```
 
 ---
 
-## 5. Diagrama de relaciones
+## 5. Migraciones — bases de datos existentes
+
+Aplicar en orden sobre una DB ya creada con el DDL anterior.
+
+```sql
+-- Snapshot de auditoría del usuario que subió el reporte, tomado del JWT
+ALTER TABLE academic_periods ADD COLUMN uploaded_by_email    VARCHAR(100);
+ALTER TABLE academic_periods ADD COLUMN uploaded_by_fullname VARCHAR(200);
+
+-- Tabla de auditoría para INSERT y DELETE en academic_periods
+CREATE TABLE academic_periods_audit (
+    id            SERIAL PRIMARY KEY,
+    period_code   VARCHAR(20)  NOT NULL,
+    operation     VARCHAR(10)  NOT NULL,
+    user_email    VARCHAR(100),
+    user_fullname VARCHAR(200),
+    operation_at  TIMESTAMP    NOT NULL,
+    source_file   VARCHAR(255),
+    ip_address    VARCHAR(45),
+    affected_rows JSON
+);
+CREATE INDEX idx_ap_audit_period_code  ON academic_periods_audit (period_code);
+CREATE INDEX idx_ap_audit_operation_at ON academic_periods_audit (operation_at);
+
+-- Objetivos individuales por asignatura (reemplaza final_score)
+-- Archivo de migración completo: doc/collections/migration_grades_objectives.sql
+ALTER TABLE grades DROP COLUMN IF EXISTS final_score;
+ALTER TABLE grades ADD COLUMN obj_1          BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE grades ADD COLUMN obj_2          BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE grades ADD COLUMN obj_3          BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE grades ADD COLUMN obj_4          BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE grades ADD COLUMN obj_5          BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE grades ADD COLUMN obj_6          BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE grades ADD COLUMN objectives_max INTEGER NOT NULL DEFAULT 0;
+```
+
+---
+
+## 6. Diagrama de relaciones
 
 ```
 roles ──────────────┐
@@ -154,31 +214,3 @@ revoked_tokens  (standalone — almacena JTIs de tokens JWT invalidados)
 ```
 
 ---
-
-## Apéndice: actualizar una BD existente
-
-Aplicar solo si la BD fue creada con el esquema anterior (pre-2026-05-07).
-
-```sql
--- Columna absent en grades
-ALTER TABLE grades ADD COLUMN IF NOT EXISTS absent BOOLEAN NOT NULL DEFAULT FALSE;
-
--- Unique constraint en grades
-ALTER TABLE grades
-    ADD CONSTRAINT IF NOT EXISTS uq_grade_student_subject_period
-        UNIQUE (student_id, subject_id, academic_period_id);
-
--- Índice faltante en grades
-CREATE INDEX IF NOT EXISTS idx_grades_subject_id ON grades(subject_id);
-CREATE INDEX IF NOT EXISTS idx_students_major_id ON students(major_id);
-
--- Tabla y índice de tokens revocados
-CREATE TABLE IF NOT EXISTS revoked_tokens (
-    id         SERIAL PRIMARY KEY,
-    jti        VARCHAR(36) NOT NULL,
-    revoked_at TIMESTAMP   NOT NULL DEFAULT NOW(),
-    CONSTRAINT uq_revoked_tokens_jti UNIQUE (jti)
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS ix_revoked_tokens_jti ON revoked_tokens(jti);
-```
