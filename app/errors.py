@@ -1,5 +1,6 @@
 import logging
 from flask import jsonify, request
+from werkzeug.exceptions import HTTPException
 
 logger = logging.getLogger(__name__)
 
@@ -50,4 +51,14 @@ def register_error_handlers(app):
     @app.errorhandler(500)
     def internal_error(e):
         logger.exception("Error interno no manejado")
+        return api_error("ERROR_INTERNO", "Error interno del servidor.", http_status=500)
+
+    @app.errorhandler(HTTPException)
+    def http_exception(e):
+        logger.warning("HTTPException no mapeada: %d %s", e.code, e.name)
+        return api_error("HTTP_ERROR", "Error en la solicitud.", http_status=e.code)
+
+    @app.errorhandler(Exception)
+    def unhandled_exception(e):
+        logger.exception("Excepción no controlada: %s", type(e).__name__)
         return api_error("ERROR_INTERNO", "Error interno del servidor.", http_status=500)

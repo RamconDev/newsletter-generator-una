@@ -101,6 +101,8 @@ CREATE TABLE grades (
 
 ## 3. Seed data — tablas normalizadas
 
+### 3.1 Roles
+
 Solo `roles` requiere datos iniciales. El resto se puebla al subir archivos `.REP`.
 
 ```sql
@@ -109,10 +111,6 @@ INSERT INTO roles (name, description) VALUES
     ('Editor', 'Puede cargar y gestionar reportes académicos.'),
     ('Viewer', 'Solo lectura: consulta de estudiantes y períodos.');
 ```
-
-> El comando `flask --app run init-roles` hace exactamente esto desde la aplicación. Usa uno u otro, no ambos, para evitar duplicados.
-
----
 
 ## 4. Índices
 
@@ -154,31 +152,3 @@ revoked_tokens  (standalone — almacena JTIs de tokens JWT invalidados)
 ```
 
 ---
-
-## Apéndice: actualizar una BD existente
-
-Aplicar solo si la BD fue creada con el esquema anterior (pre-2026-05-07).
-
-```sql
--- Columna absent en grades
-ALTER TABLE grades ADD COLUMN IF NOT EXISTS absent BOOLEAN NOT NULL DEFAULT FALSE;
-
--- Unique constraint en grades
-ALTER TABLE grades
-    ADD CONSTRAINT IF NOT EXISTS uq_grade_student_subject_period
-        UNIQUE (student_id, subject_id, academic_period_id);
-
--- Índice faltante en grades
-CREATE INDEX IF NOT EXISTS idx_grades_subject_id ON grades(subject_id);
-CREATE INDEX IF NOT EXISTS idx_students_major_id ON students(major_id);
-
--- Tabla y índice de tokens revocados
-CREATE TABLE IF NOT EXISTS revoked_tokens (
-    id         SERIAL PRIMARY KEY,
-    jti        VARCHAR(36) NOT NULL,
-    revoked_at TIMESTAMP   NOT NULL DEFAULT NOW(),
-    CONSTRAINT uq_revoked_tokens_jti UNIQUE (jti)
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS ix_revoked_tokens_jti ON revoked_tokens(jti);
-```

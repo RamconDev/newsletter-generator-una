@@ -109,7 +109,8 @@ def reports_get():
 def academic_periods_get():
     try:
         periods = get_all_academic_periods()
-        return api_success(data={"academic_periods": periods}, mensaje="Períodos académicos.")
+        data = [{"id": p["id"], "code": p["code"]} for p in periods]
+        return api_success(data={"academic_periods": data}, mensaje="Períodos académicos.")
     except Exception:
         logger.exception("Error fetching academic periods")
         return api_error("ERROR_INTERNO", "Error al obtener los períodos académicos.", http_status=500)
