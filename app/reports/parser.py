@@ -1,5 +1,5 @@
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
@@ -9,14 +9,17 @@ _OBJECTIVE_PATTERN = re.compile(r'\|\d{2}\s')
 _CEDULA_PATTERN = re.compile(r'\b([VEJP]-\d+)\b')
 _WHITESPACE_PATTERN = re.compile(r'\s+')
 
+_KNOWN_COND = {'RG', 'RP', 'NP'}
+
 
 @dataclass
 class ParsedGrade:
     cedula: str
     full_name: str
     carrera_codigo: str
-    nota_final: str
-    condicion: str
+    condicion: str          # siempre el valor real: RG | RP (nunca "NP")
+    objectives: list[bool]  # logros individuales [T1..T6]
+    objectives_max: int     # máximo de objetivos posibles para la asignatura
     subject_code: str
     subject_name: str
     period_code: Optional[str]
@@ -47,7 +50,8 @@ def parse_report(file_path: Path, encoding: str = 'latin-1') -> list[ParsedGrade
 
             if "OBJETIVO" in line and current_subject_code:
                 found = len(_OBJECTIVE_PATTERN.findall(line))
-                max_objectives = found if found > 0 else -1
+                if found > 0:
+                    max_objectives = found
                 continue
 
             cedula_match = _CEDULA_PATTERN.search(line)
@@ -62,38 +66,43 @@ def parse_report(file_path: Path, encoding: str = 'latin-1') -> list[ParsedGrade
                 continue
 
             resto = partes[1].strip()
+            tokens = resto.split()
+            if not tokens:
+                continue
 
-            if "No Presento" in resto:
-                carrera_codigo = resto.split()[0]
-                nombre = resto.replace(carrera_codigo, "").replace("No Presento", "").strip()
-                condicion = "NP"
-                nota_final = "No Presentó"
+            carrera_codigo = tokens[0]
+
+            if "No" in tokens and "Presento" in tokens:
+                # tokens: [carrera, ...nombre..., COND, "No", "Presento"]
+                no_idx = tokens.index("No")
+                pre_no = tokens[1:no_idx]
+                if not pre_no:
+                    continue
+                condicion = pre_no[-1] if pre_no[-1] in _KNOWN_COND else "RG"
+                nombre_tokens = pre_no[:-1] if pre_no[-1] in _KNOWN_COND else pre_no
+                nombre = " ".join(nombre_tokens)
+                objectives: list[bool] = []
                 absent = True
             else:
-                tokens = resto.split()
-                if not tokens:
+                if max_objectives <= 0 or len(tokens) < max_objectives + 3:
                     continue
-                carrera_codigo = tokens[0]
-                nota_cruda = tokens[-1]
-                nota_final = f"{nota_cruda}/{max_objectives}"
-
-                letras_tokens = [t for t in tokens[1:-1] if not t.isdigit()]
-                condicion = letras_tokens[-1] if letras_tokens else "N/A"
-
-                nombre_tokens = []
-                for t in tokens[1:]:
-                    if t == condicion or t.isdigit():
-                        break
-                    nombre_tokens.append(t)
+                # tokens: [carrera, ...nombre..., COND, obj_1..obj_n, total]
+                obj_tokens = tokens[-(max_objectives + 1):-1]
+                condicion = tokens[-(max_objectives + 2)]
+                if condicion not in _KNOWN_COND:
+                    condicion = "RG"
+                nombre_tokens = tokens[1:-(max_objectives + 2)]
                 nombre = " ".join(nombre_tokens)
+                objectives = [t == "1" for t in obj_tokens]
                 absent = False
 
             results.append(ParsedGrade(
                 cedula=cedula,
                 full_name=nombre,
                 carrera_codigo=carrera_codigo,
-                nota_final=nota_final,
                 condicion=condicion,
+                objectives=objectives,
+                objectives_max=max_objectives,
                 subject_code=current_subject_code,
                 subject_name=current_subject_name,
                 period_code=current_period_code,

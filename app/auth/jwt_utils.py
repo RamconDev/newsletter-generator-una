@@ -117,6 +117,19 @@ def current_user_id() -> int | None:
     return getattr(g, 'current_user', {}).get('sub')
 
 
+def current_user_email() -> str | None:
+    """Return the authenticated user's email from the JWT payload."""
+    return getattr(g, 'current_user', {}).get('email')
+
+
+def current_user_fullname() -> str | None:
+    """Return firstname + lastname from the JWT payload as a single string."""
+    payload = getattr(g, 'current_user', {})
+    parts = [payload.get('firstname', ''), payload.get('lastname', '')]
+    fullname = ' '.join(p for p in parts if p)
+    return fullname or None
+
+
 def current_user_has_role(*roles: str) -> bool:
     """Return True if the authenticated user has at least one of the given roles."""
     user_roles = set(getattr(g, 'current_user', {}).get('roles', []))

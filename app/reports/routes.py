@@ -177,7 +177,11 @@ def students_by_period(period_code):
 @require_role('Admin')
 def academic_period_delete(period_code):
     try:
-        result = delete_academic_period(period_code)
+        result = delete_academic_period(
+            period_code,
+            deleted_by_email=current_user_email(),
+            deleted_by_fullname=current_user_fullname(),
+        )
     except Exception:
         logger.exception("Error deleting academic period: %s", period_code)
         return api_error("ERROR_INTERNO", "Error al eliminar el período académico.", http_status=500)

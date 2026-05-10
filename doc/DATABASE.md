@@ -86,11 +86,29 @@ CREATE TABLE academic_periods (
     source_file          VARCHAR(255)
 );
 
+CREATE TABLE academic_periods_audit (
+    id            SERIAL PRIMARY KEY,
+    period_code   VARCHAR(20)  NOT NULL,
+    operation     VARCHAR(10)  NOT NULL,
+    user_email    VARCHAR(100),
+    user_fullname VARCHAR(200),
+    operation_at  TIMESTAMP    NOT NULL,
+    source_file   VARCHAR(255),
+    ip_address    VARCHAR(45),
+    affected_rows JSON
+);
+
 CREATE TABLE grades (
     id                 SERIAL PRIMARY KEY,
-    final_score        VARCHAR(20) NOT NULL,   -- puede ser "No Presento"
-    condition          VARCHAR(20),             -- e.g. 'RG', 'RP'
-    absent             BOOLEAN NOT NULL DEFAULT FALSE,
+    condition          VARCHAR(20),              -- RG | RP (condición real del estudiante)
+    absent             BOOLEAN NOT NULL DEFAULT FALSE,  -- TRUE si "No Presento"
+    obj_1              BOOLEAN NOT NULL DEFAULT FALSE,  -- objetivo T1 logrado
+    obj_2              BOOLEAN NOT NULL DEFAULT FALSE,
+    obj_3              BOOLEAN NOT NULL DEFAULT FALSE,
+    obj_4              BOOLEAN NOT NULL DEFAULT FALSE,
+    obj_5              BOOLEAN NOT NULL DEFAULT FALSE,
+    obj_6              BOOLEAN NOT NULL DEFAULT FALSE,
+    objectives_max     INTEGER NOT NULL DEFAULT 0,      -- máx. objetivos posibles para la asignatura
     student_id         INTEGER NOT NULL REFERENCES students(id),
     subject_id         INTEGER NOT NULL REFERENCES subjects(id),
     academic_period_id INTEGER REFERENCES academic_periods(id),
@@ -132,6 +150,10 @@ CREATE INDEX idx_users_email    ON users(email);
 
 -- Lookup rápido de tokens revocados por JTI
 CREATE UNIQUE INDEX ix_revoked_tokens_jti ON revoked_tokens(jti);
+
+-- Consultas de auditoría por período y por rango de fechas
+CREATE INDEX idx_ap_audit_period_code  ON academic_periods_audit (period_code);
+CREATE INDEX idx_ap_audit_operation_at ON academic_periods_audit (operation_at);
 ```
 
 ---
@@ -144,6 +166,32 @@ Aplicar en orden sobre una DB ya creada con el DDL anterior.
 -- Snapshot de auditoría del usuario que subió el reporte, tomado del JWT
 ALTER TABLE academic_periods ADD COLUMN uploaded_by_email    VARCHAR(100);
 ALTER TABLE academic_periods ADD COLUMN uploaded_by_fullname VARCHAR(200);
+
+-- Tabla de auditoría para INSERT y DELETE en academic_periods
+CREATE TABLE academic_periods_audit (
+    id            SERIAL PRIMARY KEY,
+    period_code   VARCHAR(20)  NOT NULL,
+    operation     VARCHAR(10)  NOT NULL,
+    user_email    VARCHAR(100),
+    user_fullname VARCHAR(200),
+    operation_at  TIMESTAMP    NOT NULL,
+    source_file   VARCHAR(255),
+    ip_address    VARCHAR(45),
+    affected_rows JSON
+);
+CREATE INDEX idx_ap_audit_period_code  ON academic_periods_audit (period_code);
+CREATE INDEX idx_ap_audit_operation_at ON academic_periods_audit (operation_at);
+
+-- Objetivos individuales por asignatura (reemplaza final_score)
+-- Archivo de migración completo: doc/collections/migration_grades_objectives.sql
+ALTER TABLE grades DROP COLUMN IF EXISTS final_score;
+ALTER TABLE grades ADD COLUMN obj_1          BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE grades ADD COLUMN obj_2          BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE grades ADD COLUMN obj_3          BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE grades ADD COLUMN obj_4          BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE grades ADD COLUMN obj_5          BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE grades ADD COLUMN obj_6          BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE grades ADD COLUMN objectives_max INTEGER NOT NULL DEFAULT 0;
 ```
 
 ---
