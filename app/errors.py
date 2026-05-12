@@ -6,16 +6,18 @@ logger = logging.getLogger(__name__)
 
 
 def api_error(codigo: str, descripcion: str, campo: str = None, http_status: int = 400):
-    body = {"codigo": codigo, "descripcion": descripcion}
+    entry = {"codigo": codigo, "descripcion": descripcion}
     if campo is not None:
-        body["campo"] = campo
-    return jsonify(body), http_status
+        entry["campo"] = campo
+    return jsonify({"error": [entry]}), http_status
+
+
+def api_errors(errors: list[dict], http_status: int = 400):
+    return jsonify({"error": errors}), http_status
 
 
 def api_success(data=None, mensaje: str = "OK", http_status: int = 200):
-    body = {"status": "success", "mensaje": mensaje}
-    if data is not None:
-        body["data"] = data
+    body = {"data": data} if data is not None else {}
     return jsonify(body), http_status
 
 
