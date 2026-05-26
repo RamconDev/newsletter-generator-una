@@ -158,15 +158,11 @@ def _format_student_data(student: Student, grades=None) -> dict:
             "asignatura": grade.subject.name,
             "condicion": grade.condition,
             "ausente": grade.absent,
-            "nota_final": "No Presento" if grade.absent else grade.objectives_achieved,
-            "objetivos": {
-                "logrados": grade.objectives_achieved,
-                "total": grade.objectives_max,
-                "detalle": [
-                    grade.obj_1, grade.obj_2, grade.obj_3,
-                    grade.obj_4, grade.obj_5, grade.obj_6,
-                ],
-            },
+            "nota_final": (
+                "No Presento"
+                if grade.absent or not grade.objectives_max or not grade.objectives_achieved
+                else f"{grade.objectives_achieved}/{grade.objectives_max}"
+            ),
         })
 
     for period_code, val in periodos_dict.items():
