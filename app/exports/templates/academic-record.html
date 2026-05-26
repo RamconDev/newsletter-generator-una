@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Ficha Académica - {{ data.cedula }}</title>
+    <style>
+        /* Estilos básicos para que el PDF se vea profesional */
+        body {
+            display: flex;
+            flex-direction: column;
+            justify-content: start;
+            font-family: 'Helvetica', 'Arial', sans-serif;
+            margin: 40px;
+            color: #333;
+        }
+
+        .table-header {
+            border: none;
+            width: 100%;
+            margin-bottom: 60px;
+        }
+
+        .table-header td {
+            vertical-align: middle;
+            text-align: center;
+            border: none;
+        }
+
+        .table-header img {
+            width: 100px;
+        }
+
+        .table-header h2 {
+            font-size: 20px;
+            margin: 0px;
+        }
+
+        .table-grades {
+            width: 100%;
+        }
+
+        .student-info {
+            margin-bottom: 20px;
+            font-size: 14px;
+        }
+
+        .student-info p {
+            margin: 5px 0;
+        }
+
+        .period-title {
+            background-color: #EFF6FF;
+            color: #1E40AF;
+            padding: 8px;
+            font-size: 16px;
+            margin-top: 30px;
+            border-left: 4px solid #1E40AF;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+            font-size: 12px;
+        }
+
+        th,
+        td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+
+        th {
+            background-color: #f8fafc;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+
+        /* Centrar algunas columnas para mejor lectura */
+        td.center,
+        th.center {
+            text-align: center;
+        }
+
+        .footer {
+            font-size: 12px;
+        }
+
+        .footer .signature {
+            margin-bottom: 60px;
+        }
+    </style>
+</head>
+
+<body>
+    <table class="table-header">
+        <tr>
+            <td>
+                <img src="{{ logo_uri }}" alt="Logo Universidad Nacional Abierta">
+            </td>
+            <td colspan="2">
+                <h2>UNIVERSIDAD NACIONAL ABIERTA</h2>
+                <h2>CENTRO LOCAL TÁCHIRA</h2>
+                <h2>FICHA DE EVALUACIÓN</h2>
+            </td>
+        </tr>
+    </table>
+
+    <section class="data-student">
+        <div class="student-info">
+            <p><strong>Nombres y Apellidos:</strong> {{ data.nombre }}</p>
+            <p><strong>Cédula de Identidad:</strong> {{ data.cedula }}</p>
+            <p><strong>Código de Carrera:</strong> {{ data.carrera }}</p>
+        </div>
+
+        {% for periodo in data.periodos %}
+        <div class="period-title">
+            <strong>Período Académico:</strong> {{ periodo.codigo }}
+        </div>
+
+        <table class="table-grades">
+            <thead>
+                <!-- <tr>
+                    <th colspan="4" class="center" style="width: 10%;"><strong>Período Académico:</strong> {{
+                        periodo.codigo }}</th>
+                </tr> -->
+                <tr>
+                    <th class="center" style="width: 10%;">Código</th>
+                    <th style="width: 50%;">Asignatura</th>
+                    <th class="center" style="width: 20%;">Condición</th>
+                    <th class="center" style="width: 20%;">Nota Final</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for materia in periodo.materias %}
+                <tr>
+                    <td class="center">{{ materia.codigo_asignatura }}</td>
+                    <td>{{ materia.asignatura }}</td>
+                    <td class="center">{{ materia.condicion }}</td>
+                    <td class="center">{{ materia.nota_final }}</td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="4" class="center">No hay materias registradas en este período.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endfor %}
+    </section>
+
+    <div class="footer">
+        <div class="signature">
+            <p class="signature__title">Firma Autorizada</p>
+            <p>La firma autorizada de la Universidad Nacional Abierta es digital.</p>
+        </div>
+        <p>Fecha: {{ data.fecha_emision }}</p>
+        <p>El presente documento es una ficha académica de evaluación, generada automáticamente por el sistema de
+            información de la Universidad Nacional Abierta.</p>
+        <p>Para mayor información, visite nuestro sitio web: www.una.edu.ve</p>
+    </div>
+
+</body>
+
+</html>

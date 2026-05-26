@@ -158,6 +158,7 @@ def _format_student_data(student: Student, grades=None) -> dict:
             "asignatura": grade.subject.name,
             "condicion": grade.condition,
             "ausente": grade.absent,
+            "nota_final": "No Presento" if grade.absent else grade.objectives_achieved,
             "objetivos": {
                 "logrados": grade.objectives_achieved,
                 "total": grade.objectives_max,

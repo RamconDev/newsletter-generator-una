@@ -6,3 +6,6 @@ def register_blueprints(app):
 
     from app.auth import auth_bp
     app.register_blueprint(auth_bp, url_prefix=prefix)
+
+    from app.exports import exports_bp
+    app.register_blueprint(exports_bp, url_prefix=prefix)
