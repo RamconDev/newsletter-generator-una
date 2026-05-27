@@ -253,6 +253,18 @@ def user_delete(user_id):
 
 ###
 #
+# ✅ LIST ROLES — Admin
+#
+###
+@auth.route("/auth/roles", methods=['GET'])
+@require_role('Admin')
+def role_list():
+    roles = db.session.execute(db.select(Role).order_by(Role.id)).scalars().all()
+    return api_success(data=[r.to_dict() for r in roles], mensaje="Roles obtenidos correctamente.")
+
+
+###
+#
 # ✅ ASSIGN ROLE — Admin
 #
 ###
