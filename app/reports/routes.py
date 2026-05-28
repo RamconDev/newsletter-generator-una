@@ -13,6 +13,7 @@ from app.reports.services import (
     get_students_by_period,
     process_and_save_report,
     get_all_academic_periods,
+    get_all_audit_records,
     delete_academic_period,
 )
 
@@ -98,11 +99,10 @@ def report_add():
 #
 ###
 @report.route("/reports", methods=['GET'])
-@require_role('Admin')
+@require_role('Admin', 'Editor')
 def reports_get():
-    periods = get_all_academic_periods()
-    data = [{k: v for k, v in p.items() if k != 'id'} for p in periods]
-    return api_success(data={"academic_periods": data}, mensaje="Listado de períodos académicos.")
+    records = get_all_audit_records()
+    return api_success(data={"audit_records": records}, mensaje="Historial de auditoría.")
 
 
 ###
