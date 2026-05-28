@@ -242,6 +242,10 @@ class AcademicPeriodAuditRepository:
         db.session.add(audit)
         return audit
 
+    @staticmethod
+    def get_all() -> list:
+        return AcademicPeriodAudit.query.order_by(AcademicPeriodAudit.operation_at.desc()).all()
+
 
 class GradeRepository:
     """Repository for Grade (Nota) operations."""
