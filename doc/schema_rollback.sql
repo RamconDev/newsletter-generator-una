@@ -6,6 +6,10 @@
 
 -- Índices (opcionales — DROP TABLE los elimina, pero los listamos
 -- para poder hacer rollbacks parciales si fuera necesario)
+DROP INDEX IF EXISTS uq_sedes;
+DROP INDEX IF EXISTS idx_sedes_centro_local;
+DROP INDEX IF EXISTS idx_users_audit_operation_at;
+DROP INDEX IF EXISTS idx_users_audit_username;
 DROP INDEX IF EXISTS idx_ap_audit_operation_at;
 DROP INDEX IF EXISTS idx_ap_audit_period_code;
 DROP INDEX IF EXISTS ix_revoked_tokens_jti;
@@ -21,6 +25,7 @@ DROP INDEX IF EXISTS idx_students_identification;
 DROP TABLE IF EXISTS grades                 CASCADE;
 DROP TABLE IF EXISTS academic_periods_audit CASCADE;
 DROP TABLE IF EXISTS academic_periods       CASCADE;
+DROP TABLE IF EXISTS sedes                  CASCADE;
 DROP TABLE IF EXISTS subjects               CASCADE;
 DROP TABLE IF EXISTS students               CASCADE;
 DROP TABLE IF EXISTS majors                 CASCADE;

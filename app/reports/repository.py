@@ -13,7 +13,7 @@ from sqlalchemy import asc as asc_fn, desc as desc_fn, func
 from sqlalchemy.orm import joinedload
 
 from app.extensions import db
-from app.models import Subject, Major, Student, Grade, AcademicPeriod, AcademicPeriodAudit
+from app.models import Subject, Major, Student, Grade, AcademicPeriod, AcademicPeriodAudit, Sede
 
 
 def _escape_like(value: str) -> str:
@@ -100,7 +100,6 @@ class StudentRepository:
         }
         col = order_map.get(order, Student.full_name)
 
-        # Base query without eager loading — used for counting
         base_query = (
             db.session.query(Student.id)
             .join(Major, Student.major_id == Major.id)
@@ -118,7 +117,6 @@ class StudentRepository:
 
         total = db.session.query(func.count()).select_from(base_query.subquery()).scalar()
 
-        # Data query with eager loading for the page slice
         data_query = (
             db.session.query(Student)
             .join(Major, Student.major_id == Major.id)
@@ -150,16 +148,34 @@ class StudentRepository:
         return student
 
 
+class SedeRepository:
+    """Repository for Sede operations."""
+
+    @staticmethod
+    def find_or_create(universidad: str, centro_local: str, oficina: str | None = None) -> Sede:
+        sede = Sede.query.filter_by(
+            universidad=universidad,
+            centro_local=centro_local,
+            oficina=oficina,
+        ).first()
+        if not sede:
+            sede = Sede(universidad=universidad, centro_local=centro_local, oficina=oficina)
+            db.session.add(sede)
+            db.session.flush()
+        return sede
+
+
 class AcademicPeriodRepository:
     """Repository for AcademicPeriod operations."""
 
     @staticmethod
-    def find_by_code(code: str) -> AcademicPeriod:
-        return AcademicPeriod.query.filter_by(code=code).first()
+    def find_by_code(code: str, sede_id: int | None = None) -> AcademicPeriod:
+        return AcademicPeriod.query.filter_by(code=code, sede_id=sede_id).first()
 
     @staticmethod
     def create(
         code: str,
+        sede_id: int | None = None,
         uploaded_by_id: int | None = None,
         uploaded_by_email: str | None = None,
         uploaded_by_fullname: str | None = None,
@@ -168,6 +184,7 @@ class AcademicPeriodRepository:
     ) -> AcademicPeriod:
         period = AcademicPeriod(
             code=code,
+            sede_id=sede_id,
             uploaded_by_id=uploaded_by_id,
             uploaded_by_email=uploaded_by_email,
             uploaded_by_fullname=uploaded_by_fullname,
@@ -222,6 +239,7 @@ class AcademicPeriodAuditRepository:
     def create(
         period_code: str,
         operation: str,
+        sede_id: int | None = None,
         user_email: str | None = None,
         user_fullname: str | None = None,
         operation_at: datetime | None = None,
@@ -232,6 +250,7 @@ class AcademicPeriodAuditRepository:
         audit = AcademicPeriodAudit(
             period_code=period_code,
             operation=operation,
+            sede_id=sede_id,
             user_email=user_email,
             user_fullname=user_fullname,
             operation_at=operation_at or datetime.now(timezone.utc),
@@ -272,36 +291,25 @@ class GradeRepository:
         ).first()
 
     @staticmethod
-    def _unpack_objectives(objectives: list[bool]) -> dict:
-        padded = (objectives + [False] * 6)[:6]
-        return {
-            'obj_1': padded[0],
-            'obj_2': padded[1],
-            'obj_3': padded[2],
-            'obj_4': padded[3],
-            'obj_5': padded[4],
-            'obj_6': padded[5],
-        }
-
-    @staticmethod
     def create(
         condition: str,
         student_id: int,
         subject_id: int,
-        objectives: list[bool],
-        objectives_max: int,
+        objectives_achieved: int,
+        objectives_total: int,
+        calificacion: str | None = None,
         academic_period_id: int = None,
         absent: bool = False,
     ) -> Grade:
-        obj_fields = GradeRepository._unpack_objectives(objectives)
         grade = Grade(
             condition=condition,
             student_id=student_id,
             subject_id=subject_id,
             academic_period_id=academic_period_id,
             absent=absent,
-            objectives_max=objectives_max,
-            **obj_fields,
+            objectives_achieved=objectives_achieved,
+            objectives_total=objectives_total,
+            calificacion=calificacion,
         )
         db.session.add(grade)
         db.session.flush()
@@ -311,15 +319,15 @@ class GradeRepository:
     def update(
         grade: Grade,
         condition: str,
-        objectives: list[bool],
-        objectives_max: int,
+        objectives_achieved: int,
+        objectives_total: int,
+        calificacion: str | None = None,
         absent: bool = False,
     ) -> Grade:
-        obj_fields = GradeRepository._unpack_objectives(objectives)
-        grade.condition = condition
-        grade.absent = absent
-        grade.objectives_max = objectives_max
-        for k, v in obj_fields.items():
-            setattr(grade, k, v)
+        grade.condition           = condition
+        grade.absent              = absent
+        grade.objectives_achieved = objectives_achieved
+        grade.objectives_total    = objectives_total
+        grade.calificacion        = calificacion
         db.session.flush()
         return grade

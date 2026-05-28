@@ -14,6 +14,7 @@ from app.reports.repository import (
     SubjectRepository,
     MajorRepository,
     StudentRepository,
+    SedeRepository,
     AcademicPeriodRepository,
     AcademicPeriodAuditRepository,
     GradeRepository,
@@ -61,37 +62,66 @@ def process_and_save_report(
     uploaded_by_email: str | None = None,
     uploaded_by_fullname: str | None = None,
     source_file: str | None = None,
-) -> bool:
+) -> tuple[bool, str | None]:
+    """
+    Returns (True, None) on success, (False, error_code) on failure.
+    error_code values: "REPORTE_VACIO" | "ERROR_LECTURA" | "ERROR_DB"
+    """
     file_path = get_path_data() / file_name
     try:
         parsed_grades = parse_report(file_path, encoding=encoding)
+    except (OSError, UnicodeDecodeError) as e:
+        logger.error("Error reading report file '%s': %s", file_name, e)
+        return False, "ERROR_LECTURA"
 
+    if not parsed_grades:
+        logger.warning("Report '%s' produced 0 records — no valid data detected.", file_name)
+        return False, "REPORTE_VACIO"
+
+    try:
+        first = parsed_grades[0]
+
+        # 1. Sede — una sola por archivo
+        sede_id = None
+        if first.universidad:
+            sede = SedeRepository.find_or_create(first.universidad, first.centro_local, first.oficina)
+            sede_id = sede.id
+
+        # 2. Período — uno solo por archivo
+        period = None
+        period_code = first.period_code
+        if period_code:
+            period = AcademicPeriodRepository.find_by_code(period_code, sede_id=sede_id)
+            is_new_period = period is None
+            if is_new_period:
+                period = AcademicPeriodRepository.create(
+                    period_code,
+                    sede_id=sede_id,
+                    uploaded_by_id=uploaded_by_id,
+                    uploaded_by_email=uploaded_by_email,
+                    uploaded_by_fullname=uploaded_by_fullname,
+                    uploaded_at=datetime.now(timezone.utc),
+                    source_file=source_file,
+                )
+            # Auditoría siempre: INSERT si es nuevo, UPDATE si ya existía
+            AcademicPeriodAuditRepository.create(
+                period_code=period_code,
+                operation='INSERT' if is_new_period else 'UPDATE',
+                sede_id=sede_id,
+                user_email=uploaded_by_email,
+                user_fullname=uploaded_by_fullname,
+                operation_at=datetime.now(timezone.utc),
+                source_file=source_file,
+                ip_address=request.remote_addr,
+            )
+
+        period_id = period.id if period else None
+
+        # 3. Loop de registros (subject/major/student/grade)
         for record in parsed_grades:
             subject = SubjectRepository.find_by_code(record.subject_code)
             if not subject:
                 subject = SubjectRepository.create(record.subject_code, record.subject_name)
-
-            period = None
-            if record.period_code:
-                period = AcademicPeriodRepository.find_by_code(record.period_code)
-                if not period:
-                    period = AcademicPeriodRepository.create(
-                        record.period_code,
-                        uploaded_by_id=uploaded_by_id,
-                        uploaded_by_email=uploaded_by_email,
-                        uploaded_by_fullname=uploaded_by_fullname,
-                        uploaded_at=datetime.now(timezone.utc),
-                        source_file=source_file,
-                    )
-                    AcademicPeriodAuditRepository.create(
-                        period_code=record.period_code,
-                        operation='INSERT',
-                        user_email=uploaded_by_email,
-                        user_fullname=uploaded_by_fullname,
-                        operation_at=datetime.now(timezone.utc),
-                        source_file=source_file,
-                        ip_address=request.remote_addr,
-                    )
 
             major = MajorRepository.find_by_code(record.carrera_codigo)
             if not major:
@@ -101,15 +131,15 @@ def process_and_save_report(
             if not student:
                 student = StudentRepository.create(record.cedula, record.full_name, major.id)
 
-            period_id = period.id if period else None
             grade = GradeRepository.find_existing(student.id, subject.id, period_id)
             if not grade:
                 GradeRepository.create(
                     condition=record.condicion,
                     student_id=student.id,
                     subject_id=subject.id,
-                    objectives=record.objectives,
-                    objectives_max=record.objectives_max,
+                    objectives_achieved=record.objectives_achieved,
+                    objectives_total=record.objectives_total,
+                    calificacion=record.calificacion,
                     academic_period_id=period_id,
                     absent=record.absent,
                 )
@@ -117,23 +147,20 @@ def process_and_save_report(
                 GradeRepository.update(
                     grade,
                     condition=record.condicion,
-                    objectives=record.objectives,
-                    objectives_max=record.objectives_max,
+                    objectives_achieved=record.objectives_achieved,
+                    objectives_total=record.objectives_total,
+                    calificacion=record.calificacion,
                     absent=record.absent,
                 )
 
         db.session.commit()
         logger.info("Report '%s' processed successfully (%d records).", file_name, len(parsed_grades))
-        return True
+        return True, None
 
-    except (OSError, UnicodeDecodeError) as e:
-        db.session.rollback()
-        logger.error("Error reading report file '%s': %s", file_name, e)
-        return False
     except SQLAlchemyError as e:
         db.session.rollback()
         logger.error("Database error processing report '%s': %s", file_name, e)
-        return False
+        return False, "ERROR_DB"
 
 
 def _format_student_data(student: Student, grades=None) -> dict:
@@ -148,27 +175,30 @@ def _format_student_data(student: Student, grades=None) -> dict:
     periodos_dict = {}
     for grade in grade_list:
         period_code = grade.academic_period.code if grade.academic_period else "Desconocido"
-        period_id = grade.academic_period.id if grade.academic_period else None
+        period_id   = grade.academic_period.id   if grade.academic_period else None
 
         if period_code not in periodos_dict:
             periodos_dict[period_code] = {"id": period_id, "materias": []}
 
+        if grade.absent or not grade.objectives_total or not grade.objectives_achieved:
+            nota_final = "No Presento"
+        elif grade.calificacion:
+            nota_final = grade.calificacion
+        else:
+            nota_final = f"{grade.objectives_achieved}/{grade.objectives_total}"
+
         periodos_dict[period_code]["materias"].append({
             "codigo_asignatura": grade.subject.code,
-            "asignatura": grade.subject.name,
-            "condicion": grade.condition,
-            "ausente": grade.absent,
-            "nota_final": (
-                "No Presento"
-                if grade.absent or not grade.objectives_max or not grade.objectives_achieved
-                else f"{grade.objectives_achieved}/{grade.objectives_max}"
-            ),
+            "asignatura":        grade.subject.name,
+            "condicion":         grade.condition,
+            "ausente":           grade.absent,
+            "nota_final":        nota_final,
         })
 
     for period_code, val in periodos_dict.items():
         resultado["periodos"].append({
-            "id": val["id"],
-            "codigo": period_code,
+            "id":       val["id"],
+            "codigo":   period_code,
             "materias": val["materias"],
         })
 

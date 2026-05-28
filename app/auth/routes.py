@@ -9,12 +9,25 @@ from app.errors import api_error, api_success
 from app.extensions import db
 from app.auth import auth_bp as auth
 from app.auth.jwt_utils import require_auth, require_role, current_user_id, current_user_has_role, _build_token, _decode_token
+from app.models import UserAudit
 from .models.user import User
 from .models.role import Role
 
 logger = logging.getLogger(__name__)
 
 _EMAIL_RE = re.compile(r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$')
+
+
+def _audit_user(username, operation, email=None, fullname=None, affected_data=None):
+    db.session.add(UserAudit(
+        user_username=username,
+        operation=operation,
+        user_email=email,
+        user_fullname=fullname,
+        operation_at=datetime.now(timezone.utc),
+        ip_address=request.remote_addr,
+        affected_data=affected_data,
+    ))
 
 
 def _validate_email(email: str) -> bool:
@@ -135,6 +148,7 @@ def user_create():
             new_user.add_role(viewer_role)
 
         db.session.add(new_user)
+        _audit_user(new_user.username, 'INSERT', new_user.email, f"{new_user.firstname} {new_user.lastname}")
         db.session.commit()
 
         return api_success(data=new_user.to_dict(), mensaje="Usuario registrado correctamente.", http_status=201)
@@ -220,6 +234,7 @@ def user_update(user_id):
     user.modificated_at = datetime.now(timezone.utc)
 
     try:
+        _audit_user(user.username, 'UPDATE', user.email, f"{user.firstname} {user.lastname}")
         db.session.commit()
         return api_success(data=user.to_dict(), mensaje="Usuario actualizado correctamente.")
     except SQLAlchemyError:
@@ -242,7 +257,10 @@ def user_delete(user_id):
 
     try:
         username = user.username
+        email = user.email
+        fullname = f"{user.firstname} {user.lastname}"
         db.session.delete(user)
+        _audit_user(username, 'DELETE', email, fullname, affected_data={'deleted_id': user_id})
         db.session.commit()
         return api_success(data={"id": user_id, "username": username}, mensaje="Usuario eliminado correctamente.")
     except SQLAlchemyError:
@@ -336,3 +354,5 @@ def user_remove_role(user_id, role_name):
         db.session.rollback()
         logger.exception("Error removing role from user %d", user_id)
         return api_error("ERROR_BASE_DATOS", "No se pudo eliminar el rol.", http_status=500)
+
+
