@@ -235,6 +235,11 @@ def get_all_academic_periods() -> list[dict]:
     return [p.to_dict() for p in periods]
 
 
+def get_all_audit_records() -> list[dict]:
+    records = AcademicPeriodAuditRepository.get_all()
+    return [{k: v for k, v in r.to_dict().items() if k != 'id'} for r in records]
+
+
 def delete_academic_period(
     period_code: str,
     deleted_by_email: str | None = None,
