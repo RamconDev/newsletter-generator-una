@@ -7,12 +7,14 @@ from werkzeug.utils import secure_filename
 
 from app.errors import api_error, api_success
 from app.auth.jwt_utils import require_auth, require_role, current_user_id, current_user_email, current_user_fullname
+from app.models import UserAudit
 from app.reports import reports_bp as report
 from app.reports.services import (
     get_student_data_from_db,
     get_students_by_period,
     process_and_save_report,
     get_all_academic_periods,
+    get_all_audit_records,
     delete_academic_period,
 )
 
@@ -70,7 +72,7 @@ def report_add():
         logger.exception("Error saving uploaded file: %s", filename)
         return api_error("ERROR_GUARDADO", "No se pudo guardar el archivo en disco.", http_status=500)
 
-    exito = process_and_save_report(
+    ok, error_code = process_and_save_report(
         filename,
         uploaded_by_id=current_user_id(),
         uploaded_by_email=current_user_email(),
@@ -78,11 +80,26 @@ def report_add():
         source_file=filename,
     )
 
-    if not exito:
+    if not ok:
         try:
             os.remove(save_path)
         except OSError:
             logger.warning("Could not remove orphaned file after failed processing: %s", save_path)
+
+        if error_code == "REPORTE_VACIO":
+            return api_error(
+                "REPORTE_VACIO",
+                "El archivo no contiene registros válidos de estudiantes.",
+                campo="file",
+                http_status=422,
+            )
+        if error_code == "ERROR_LECTURA":
+            return api_error(
+                "ARCHIVO_CORRUPTO",
+                "No se pudo leer el archivo. Verifique la codificación.",
+                campo="file",
+                http_status=422,
+            )
         return api_error("ERROR_PROCESAMIENTO", "Error al procesar el reporte en la base de datos.", http_status=500)
 
     return api_success(
@@ -98,11 +115,10 @@ def report_add():
 #
 ###
 @report.route("/reports", methods=['GET'])
-@require_role('Admin')
+@require_role('Admin', 'Editor')
 def reports_get():
-    periods = get_all_academic_periods()
-    data = [{k: v for k, v in p.items() if k != 'id'} for p in periods]
-    return api_success(data={"academic_periods": data}, mensaje="Listado de períodos académicos.")
+    records = get_all_audit_records()
+    return api_success(data={"audit_records": records}, mensaje="Historial de auditoría.")
 
 
 ###
@@ -218,3 +234,16 @@ def student_search(identification):
         return api_success(data=result, mensaje="Estudiante encontrado.")
 
     return api_error("ESTUDIANTE_NO_ENCONTRADO", "Estudiante no encontrado.", http_status=404)
+
+
+###
+#
+# ✅ USER AUDIT — Admin
+#
+###
+@report.route("/reports/audit/users", methods=['GET'])
+@require_role('Admin')
+def user_audit_list():
+    records = UserAudit.query.order_by(UserAudit.operation_at.desc()).all()
+    data = [{k: v for k, v in r.to_dict().items() if k != 'id'} for r in records]
+    return api_success(data={"audit_records": data}, mensaje="Historial de auditoría de usuarios.")

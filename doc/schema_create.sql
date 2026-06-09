@@ -61,20 +61,30 @@ CREATE TABLE subjects (
     name VARCHAR(150) NOT NULL
 );
 
+CREATE TABLE sedes (
+    id            SERIAL PRIMARY KEY,
+    universidad   VARCHAR(200) NOT NULL,
+    centro_local  VARCHAR(200) NOT NULL,
+    oficina       VARCHAR(200)
+);
+
 CREATE TABLE academic_periods (
     id                   SERIAL PRIMARY KEY,
-    code                 VARCHAR(20) NOT NULL UNIQUE,
+    code                 VARCHAR(20) NOT NULL,
+    sede_id              INTEGER REFERENCES sedes(id),
     uploaded_by_id       INTEGER REFERENCES users(id) ON DELETE SET NULL,
     uploaded_by_email    VARCHAR(100),
     uploaded_by_fullname VARCHAR(200),
     uploaded_at          TIMESTAMP,
-    source_file          VARCHAR(255)
+    source_file          VARCHAR(255),
+    CONSTRAINT uq_period_code_sede UNIQUE (code, sede_id)
 );
 
 CREATE TABLE academic_periods_audit (
     id            SERIAL PRIMARY KEY,
     period_code   VARCHAR(20)  NOT NULL,
     operation     VARCHAR(10)  NOT NULL,
+    sede_id       INTEGER,
     user_email    VARCHAR(100),
     user_fullname VARCHAR(200),
     operation_at  TIMESTAMP    NOT NULL,
@@ -83,20 +93,27 @@ CREATE TABLE academic_periods_audit (
     affected_rows JSON
 );
 
+CREATE TABLE users_audit (
+    id            SERIAL PRIMARY KEY,
+    user_username VARCHAR(100) NOT NULL,
+    operation     VARCHAR(10)  NOT NULL,
+    user_email    VARCHAR(100),
+    user_fullname VARCHAR(200),
+    operation_at  TIMESTAMP    NOT NULL,
+    ip_address    VARCHAR(45),
+    affected_data JSON
+);
+
 CREATE TABLE grades (
-    id                 SERIAL PRIMARY KEY,
-    condition          VARCHAR(20),              -- RG | RP
-    absent             BOOLEAN NOT NULL DEFAULT FALSE,
-    obj_1              BOOLEAN NOT NULL DEFAULT FALSE,
-    obj_2              BOOLEAN NOT NULL DEFAULT FALSE,
-    obj_3              BOOLEAN NOT NULL DEFAULT FALSE,
-    obj_4              BOOLEAN NOT NULL DEFAULT FALSE,
-    obj_5              BOOLEAN NOT NULL DEFAULT FALSE,
-    obj_6              BOOLEAN NOT NULL DEFAULT FALSE,
-    objectives_max     INTEGER NOT NULL DEFAULT 0,
-    student_id         INTEGER NOT NULL REFERENCES students(id),
-    subject_id         INTEGER NOT NULL REFERENCES subjects(id),
-    academic_period_id INTEGER REFERENCES academic_periods(id),
+    id                  SERIAL PRIMARY KEY,
+    condition           VARCHAR(20),              -- RG | RP
+    absent              BOOLEAN NOT NULL DEFAULT FALSE,
+    objectives_achieved INTEGER NOT NULL DEFAULT 0,
+    objectives_total    INTEGER NOT NULL DEFAULT 0,
+    calificacion        VARCHAR(10),
+    student_id          INTEGER NOT NULL REFERENCES students(id),
+    subject_id          INTEGER NOT NULL REFERENCES subjects(id),
+    academic_period_id  INTEGER REFERENCES academic_periods(id),
     CONSTRAINT uq_grade_student_subject_period
         UNIQUE (student_id, subject_id, academic_period_id)
 );
@@ -120,6 +137,12 @@ CREATE UNIQUE INDEX ix_revoked_tokens_jti  ON revoked_tokens(jti);
 CREATE INDEX idx_ap_audit_period_code      ON academic_periods_audit(period_code);
 CREATE INDEX idx_ap_audit_operation_at     ON academic_periods_audit(operation_at);
 
+CREATE INDEX idx_users_audit_username      ON users_audit(user_username);
+CREATE INDEX idx_users_audit_operation_at  ON users_audit(operation_at);
+
+CREATE INDEX idx_sedes_centro_local        ON sedes(centro_local);
+CREATE UNIQUE INDEX uq_sedes               ON sedes(universidad, centro_local, COALESCE(oficina, ''));
+
 -- ─────────────────────────────────────────
 -- SEED DATA
 -- ─────────────────────────────────────────
@@ -128,3 +151,12 @@ INSERT INTO roles (name, description) VALUES
     ('Admin',  'Acceso total: gestión de usuarios, roles y reportes.'),
     ('Editor', 'Puede cargar y gestionar reportes académicos.'),
     ('Viewer', 'Solo lectura: consulta de estudiantes y períodos.');
+
+INSERT INTO users (firstname, lastname, username, email, password_hash, is_active) VALUES
+    ('Admin', 'Sistema', 'admin', 'admin@sistema.com', 'scrypt:32768:8:1$juY7Z3Nyw32jQgZ5$2a993513ebf1131d1b1c61356c72513f931f7d4bd3f763f4b1bee1e18390a7b7ea452c8f151165abdea52638af166e4de5fdcc05d4bd07fbb380bda0e8ea61ae', TRUE);
+
+INSERT INTO roles_users (user_id, role_id)
+SELECT u.id, r.id
+FROM   users u
+JOIN   roles r ON r.name = 'Admin'
+WHERE  u.username = 'admin';

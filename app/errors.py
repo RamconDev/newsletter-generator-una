@@ -5,20 +5,26 @@ from werkzeug.exceptions import HTTPException
 logger = logging.getLogger(__name__)
 
 
-def api_error(codigo: str, descripcion: str, campo: str = None, http_status: int = 400):
-    entry = {"codigo": codigo, "descripcion": descripcion}
-    if campo is not None:
-        entry["campo"] = campo
-    return jsonify({"error": [entry]}), http_status
+def api_success(data=None, mensaje: str = "OK", http_status: int = 200, status: str = "success"):
+    return jsonify({
+        "status": status,
+        "message": mensaje,
+        "data": data if data is not None else {},
+    }), http_status
 
 
-def api_errors(errors: list[dict], http_status: int = 400):
-    return jsonify({"error": errors}), http_status
+def api_error(codigo: str, descripcion: str, campo: str = None, http_status: int = 400, status: str = "error"):
+    # codigo y campo se conservan en la firma por compatibilidad con los call-sites, pero no se emiten.
+    return jsonify({
+        "status": status,
+        "message": descripcion,
+        "data": {},
+    }), http_status
 
 
-def api_success(data=None, mensaje: str = "OK", http_status: int = 200):
-    body = {"data": data} if data is not None else {}
-    return jsonify(body), http_status
+def api_errors(errors: list[dict], http_status: int = 400, status: str = "error"):
+    message = " ".join(e.get("descripcion", "") for e in errors).strip() or "Solicitud inválida."
+    return jsonify({"status": status, "message": message, "data": {}}), http_status
 
 
 def register_error_handlers(app):
