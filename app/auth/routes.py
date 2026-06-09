@@ -64,7 +64,7 @@ def user_login():
         'email': user.email,
         'firstname': user.firstname,
         'lastname': user.lastname,
-        'roles': [role.name for role in user.roles],
+        'role': user.role.name if user.role else None,
     }
     token = _build_token(user_payload, 'access', current_app.config['JWT_EXP_HOURS'])
     refresh_token = _build_token(user_payload, 'refresh', current_app.config['JWT_REFRESH_EXP_HOURS'])
@@ -87,7 +87,7 @@ def token_refresh():
     if err:
         return err
 
-    user_payload = {k: payload[k] for k in ('sub', 'email', 'firstname', 'lastname', 'roles') if k in payload}
+    user_payload = {k: payload[k] for k in ('sub', 'email', 'firstname', 'lastname', 'role') if k in payload}
     token = _build_token(user_payload, 'access', current_app.config['JWT_EXP_HOURS'])
     refresh_token = _build_token(user_payload, 'refresh', current_app.config['JWT_REFRESH_EXP_HOURS'])
 
@@ -133,6 +133,11 @@ def user_create():
     if not valid:
         return api_error("PASSWORD_DEBIL", msg, campo="password")
 
+    role_name = (data.get('role') or 'Viewer').strip()
+    role = Role.query.filter_by(name=role_name).first()
+    if not role:
+        return api_error("ROL_NO_ENCONTRADO", "El rol no existe.", http_status=404, campo="role")
+
     try:
         new_user = User(
             firstname=data['firstname'],
@@ -142,10 +147,7 @@ def user_create():
             phone=data.get('phone'),
         )
         new_user.set_password(data['password'])
-
-        viewer_role = Role.query.filter_by(name='Viewer').first()
-        if viewer_role:
-            new_user.add_role(viewer_role)
+        new_user.set_role(role)
 
         db.session.add(new_user)
         _audit_user(new_user.username, 'INSERT', new_user.email, f"{new_user.firstname} {new_user.lastname}")
@@ -305,11 +307,17 @@ def user_assign_role(user_id):
     if not role:
         return api_error("ROL_NO_ENCONTRADO", "El rol no existe.", http_status=404, campo="role")
 
-    if user.has_role(role_name):
-        return api_error("ROL_YA_ASIGNADO", "El usuario ya tiene ese rol.", http_status=409)
+    if user.has_role('Admin') and role_name != 'Admin':
+        admin_count = User.query.filter(User.role.has(name='Admin')).count()
+        if admin_count <= 1:
+            return api_error(
+                "OPERACION_NO_PERMITIDA",
+                "No se puede degradar al último administrador del sistema.",
+                http_status=409,
+            )
 
     try:
-        user.add_role(role)
+        user.set_role(role)
         db.session.commit()
         return api_success(data=user.to_dict(), mensaje="Rol asignado correctamente.", http_status=201)
     except SQLAlchemyError:
@@ -338,7 +346,7 @@ def user_remove_role(user_id, role_name):
         return api_error("ROL_NO_ASIGNADO", "El usuario no tiene ese rol.", http_status=404)
 
     if role_name == 'Admin':
-        admin_count = User.query.join(User.roles).filter(Role.name == 'Admin').count()
+        admin_count = User.query.filter(User.role.has(name='Admin')).count()
         if admin_count <= 1:
             return api_error(
                 "OPERACION_NO_PERMITIDA",
@@ -347,7 +355,7 @@ def user_remove_role(user_id, role_name):
             )
 
     try:
-        user.roles.remove(role)
+        user.set_role(None)
         db.session.commit()
         return api_success(data=user.to_dict(), mensaje="Rol eliminado correctamente.")
     except SQLAlchemyError:

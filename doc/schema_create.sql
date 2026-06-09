@@ -23,13 +23,8 @@ CREATE TABLE users (
     phone            VARCHAR(100),
     create_at        TIMESTAMP NOT NULL DEFAULT NOW(),
     modificated_at   TIMESTAMP,
+    role_id          INTEGER REFERENCES roles(id) ON DELETE SET NULL,
     is_active        BOOLEAN NOT NULL DEFAULT TRUE
-);
-
-CREATE TABLE roles_users (
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    role_id INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
-    PRIMARY KEY (user_id, role_id)
 );
 
 CREATE TABLE revoked_tokens (
@@ -131,6 +126,7 @@ CREATE INDEX idx_grades_academic_period_id  ON grades(academic_period_id);
 
 CREATE INDEX idx_users_username             ON users(username);
 CREATE INDEX idx_users_email               ON users(email);
+CREATE INDEX idx_users_role_id             ON users(role_id);
 
 CREATE UNIQUE INDEX ix_revoked_tokens_jti  ON revoked_tokens(jti);
 
@@ -152,11 +148,6 @@ INSERT INTO roles (name, description) VALUES
     ('Editor', 'Puede cargar y gestionar reportes académicos.'),
     ('Viewer', 'Solo lectura: consulta de estudiantes y períodos.');
 
-INSERT INTO users (firstname, lastname, username, email, password_hash, is_active) VALUES
-    ('Admin', 'Sistema', 'admin', 'admin@sistema.com', 'scrypt:32768:8:1$juY7Z3Nyw32jQgZ5$2a993513ebf1131d1b1c61356c72513f931f7d4bd3f763f4b1bee1e18390a7b7ea452c8f151165abdea52638af166e4de5fdcc05d4bd07fbb380bda0e8ea61ae', TRUE);
-
-INSERT INTO roles_users (user_id, role_id)
-SELECT u.id, r.id
-FROM   users u
-JOIN   roles r ON r.name = 'Admin'
-WHERE  u.username = 'admin';
+INSERT INTO users (firstname, lastname, username, email, password_hash, role_id) VALUES
+    ('Admin', 'Sistema', 'admin', 'admin@sistema.com', 'scrypt:32768:8:1$juY7Z3Nyw32jQgZ5$2a993513ebf1131d1b1c61356c72513f931f7d4bd3f763f4b1bee1e18390a7b7ea452c8f151165abdea52638af166e4de5fdcc05d4bd07fbb380bda0e8ea61ae',
+     (SELECT id FROM roles WHERE name = 'Admin'));

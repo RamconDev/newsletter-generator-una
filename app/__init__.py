@@ -75,7 +75,7 @@ def create_app():
 
     db.init_app(app)
     _validate_db_connection(app)
-    from app.auth.models import User, Role, roles_users
+    from app.auth.models import User, Role
     from app.auth.models.revoked_token import RevokedToken
     from app.models import Major, Student, Subject, Grade
 

@@ -1,6 +1,5 @@
 from .models.role import Role
 from .models.user import User
-from .models.roles_users import roles_users
 from .models.revoked_token import RevokedToken
 
 from app.extensions import db
