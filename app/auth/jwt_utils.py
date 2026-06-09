@@ -100,8 +100,7 @@ def require_role(*roles: str):
                 return err
 
             g.current_user = payload
-            user_roles = set(payload.get('roles', []))
-            if not user_roles.intersection(roles):
+            if payload.get('role') not in roles:
                 return api_error(
                     "ACCESO_DENEGADO",
                     f"Rol requerido: {' | '.join(roles)}.",
@@ -131,6 +130,5 @@ def current_user_fullname() -> str | None:
 
 
 def current_user_has_role(*roles: str) -> bool:
-    """Return True if the authenticated user has at least one of the given roles."""
-    user_roles = set(getattr(g, 'current_user', {}).get('roles', []))
-    return bool(user_roles.intersection(roles))
+    """Return True if the authenticated user's role is one of the given roles."""
+    return getattr(g, 'current_user', {}).get('role') in roles

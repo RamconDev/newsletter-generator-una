@@ -4,7 +4,6 @@ from flask_login import UserMixin
 from werkzeug.security import generate_password_hash, check_password_hash
 
 from app.extensions import db
-from .roles_users import roles_users
 
 
 class User(db.Model, UserMixin):
@@ -23,7 +22,8 @@ class User(db.Model, UserMixin):
 
     is_active = db.Column(db.Boolean(), default=True)
 
-    roles = db.relationship('Role', secondary=roles_users, backref=db.backref('users', lazy='dynamic'))
+    role_id = db.Column(db.Integer, db.ForeignKey('roles.id'), nullable=True)
+    role = db.relationship('Role', backref=db.backref('users', lazy='dynamic'))
 
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
@@ -32,11 +32,10 @@ class User(db.Model, UserMixin):
         return check_password_hash(self.password_hash, password)
 
     def has_role(self, role_name):
-        return any(role.name == role_name for role in self.roles)
+        return self.role is not None and self.role.name == role_name
 
-    def add_role(self, role):
-        if role not in self.roles:
-            self.roles.append(role)
+    def set_role(self, role):
+        self.role = role
 
     def to_dict(self):
         return {
@@ -47,5 +46,5 @@ class User(db.Model, UserMixin):
             'email': self.email,
             'phone': self.phone,
             'is_active': self.is_active,
-            'roles': [role.name for role in self.roles]
+            'roles': self.role.name if self.role else None
         }
