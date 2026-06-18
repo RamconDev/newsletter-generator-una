@@ -44,11 +44,33 @@ class MajorRepository:
         return Major.query.filter_by(code=code).first()
 
     @staticmethod
-    def create(code: str) -> Major:
-        major = Major(code=code)
+    def find_by_id(major_id: int) -> Major:
+        return db.session.get(Major, major_id)
+
+    @staticmethod
+    def get_all() -> list:
+        return Major.query.order_by(Major.code).all()
+
+    @staticmethod
+    def create(code: str, name: str | None = None) -> Major:
+        major = Major(code=code, name=name)
         db.session.add(major)
         db.session.flush()
         return major
+
+    @staticmethod
+    def update(major: Major, code: str | None = None, name: str | None = None) -> Major:
+        if code is not None:
+            major.code = code
+        if name is not None:
+            major.name = name
+        db.session.flush()
+        return major
+
+    @staticmethod
+    def delete(major: Major) -> None:
+        db.session.delete(major)
+        db.session.flush()
 
 
 class StudentRepository:

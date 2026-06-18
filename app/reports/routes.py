@@ -16,6 +16,11 @@ from app.reports.services import (
     get_all_academic_periods,
     get_all_audit_records,
     delete_academic_period,
+    get_all_careers,
+    get_career,
+    create_careers,
+    update_career,
+    delete_career,
 )
 
 logger = logging.getLogger(__name__)
@@ -72,7 +77,7 @@ def report_add():
         logger.exception("Error saving uploaded file: %s", filename)
         return api_error("ERROR_GUARDADO", "No se pudo guardar el archivo en disco.", http_status=500)
 
-    ok, error_code = process_and_save_report(
+    ok, error_code, missing_codes = process_and_save_report(
         filename,
         uploaded_by_id=current_user_id(),
         uploaded_by_email=current_user_email(),
@@ -103,7 +108,7 @@ def report_add():
         return api_error("ERROR_PROCESAMIENTO", "Error al procesar el reporte en la base de datos.", http_status=500)
 
     return api_success(
-        data={"filename": filename},
+        data={"filename": filename, "carreras_sin_nombre": missing_codes},
         mensaje="Archivo cargado, validado y guardado correctamente.",
         http_status=201,
     )
@@ -234,6 +239,100 @@ def student_search(identification):
         return api_success(data=result, mensaje="Estudiante encontrado.")
 
     return api_error("ESTUDIANTE_NO_ENCONTRADO", "Estudiante no encontrado.", http_status=404)
+
+
+###
+#
+# ✅ CAREERS (Majors) CRUD
+#
+###
+@report.route("/careers", methods=['GET'])
+@require_role('Admin', 'Editor', 'Viewer')
+def careers_get():
+    return api_success(data={"careers": get_all_careers()}, mensaje="Carreras.")
+
+
+@report.route("/careers/<int:major_id>", methods=['GET'])
+@require_role('Admin', 'Editor', 'Viewer')
+def career_get(major_id):
+    career = get_career(major_id)
+    if not career:
+        return api_error("CARRERA_NO_ENCONTRADA", f"Carrera {major_id} no encontrada.", http_status=404)
+    return api_success(data=career, mensaje="Carrera encontrada.")
+
+
+@report.route("/careers", methods=['POST'])
+@require_role('Admin', 'Editor')
+def career_create():
+    data = request.get_json(silent=True)
+    if not isinstance(data, list):
+        return api_error("FORMATO_INVALIDO", "El cuerpo debe ser un arreglo de carreras.")
+    if not data:
+        return api_error("CUERPO_REQUERIDO", "El arreglo no puede estar vacío.")
+
+    processed, failed, db_error = create_careers(data)
+    if db_error:
+        return api_error("ERROR_BASE_DATOS", "No se pudieron guardar las carreras.", http_status=500)
+
+    if failed:
+        return api_success(
+            data={"procesadas": processed, "fallidas": failed},
+            mensaje=f"Códigos no guardados: {', '.join(failed)}.",
+            http_status=207,
+            status="error",
+        )
+
+    return api_success(
+        data={"procesadas": processed},
+        mensaje="Carreras guardadas correctamente.",
+        http_status=201,
+    )
+
+
+@report.route("/careers/<int:major_id>", methods=['PUT'])
+@require_role('Admin', 'Editor')
+def career_update(major_id):
+    data = request.get_json()
+    if not data:
+        return api_error("CUERPO_REQUERIDO", "El cuerpo de la solicitud es requerido.")
+
+    code = data.get('code')
+    if code is not None:
+        code = code.strip()
+        if not code:
+            return api_error("CAMPO_REQUERIDO", "El campo 'code' no puede estar vacío.", campo="code")
+
+    name = data.get('name')
+    if name is not None:
+        name = name.strip() or None
+
+    career, error_code = update_career(major_id, code=code, name=name)
+    if error_code == "NO_ENCONTRADO":
+        return api_error("CARRERA_NO_ENCONTRADA", f"Carrera {major_id} no encontrada.", http_status=404)
+    if error_code == "CODIGO_DUPLICADO":
+        return api_error("CODIGO_DUPLICADO", "Ya existe una carrera con ese código.", campo="code", http_status=409)
+    if error_code:
+        return api_error("ERROR_BASE_DATOS", "No se pudo actualizar la carrera.", http_status=500)
+
+    return api_success(data=career, mensaje="Carrera actualizada correctamente.")
+
+
+@report.route("/careers/<int:major_id>", methods=['DELETE'])
+@require_role('Admin')
+def career_delete(major_id):
+    error_code = delete_career(major_id)
+    if error_code == "NO_ENCONTRADO":
+        return api_error("CARRERA_NO_ENCONTRADA", f"Carrera {major_id} no encontrada.", http_status=404)
+    if error_code == "TIENE_ESTUDIANTES":
+        return api_error(
+            "CARRERA_CON_ESTUDIANTES",
+            "No se puede eliminar: la carrera tiene estudiantes asociados.",
+            http_status=409,
+        )
+    if error_code:
+        return api_error("ERROR_BASE_DATOS", "No se pudo eliminar la carrera.", http_status=500)
+
+    return api_success(data={"id": major_id}, mensaje="Carrera eliminada correctamente.")
 
 
 ###
