@@ -1,56 +1,44 @@
+import logging
 import os
+from datetime import datetime, timezone
 from pathlib import Path
-import re
-from flask import current_app
+
+from flask import current_app, request
+from sqlalchemy.exc import SQLAlchemyError
 from werkzeug.utils import secure_filename
 
 from app.extensions import db
 from app.models import Subject, Major, Student, Grade, AcademicPeriod
+from app.reports.parser import parse_report
 from app.reports.repository import (
     SubjectRepository,
     MajorRepository,
     StudentRepository,
+    SedeRepository,
     AcademicPeriodRepository,
-    GradeRepository
+    AcademicPeriodAuditRepository,
+    GradeRepository,
 )
 
-def get_path_data():
+logger = logging.getLogger(__name__)
+
+
+def get_path_data() -> Path:
     directory = Path(current_app.root_path) / '../data'
     directory.mkdir(parents=True, exist_ok=True)
     return directory
 
-def get_reports_list():
+
+def get_reports_list() -> list[str]:
     try:
         directory = get_path_data()
-        print(f"✅ Searching files in: {directory}")
+        return [f.name for f in directory.iterdir() if f.is_file()]
+    except OSError:
+        logger.exception("Error listing report files")
+        return []
 
-        archives_list = [archive.name for archive in directory.iterdir() if archive.is_file()]
 
-        print(f"✅ Files found: { archives_list }")
-
-        return archives_list
-    except Exception as e:
-        print(f"✅ Error: {e}")
-        return ['Nothing']
-
-def get_report(file_name, encoding="utf-8"):
-    path = get_path_data()
-    file_path = path / file_name
-
-    print(f"✅ {file_path}")
-
-    try:
-        if not file_path.exists() or not file_path.is_file():
-            print("✅ The file doesn't exists or isn't valid.")
-            return None
-        
-        with open(file_path, 'r', encoding=encoding) as f:
-            for line in f:
-                line.strip().split('REPORTE DE OBJETIVOS LOGRADOS (Acumulados)')
-    except Exception:
-        return None
-
-def add_report_to_list(archive):
+def add_report_to_list(archive) -> bool:
     if archive:
         secure_name = secure_filename(archive.filename)
         save_directory = get_path_data() / secure_name
@@ -58,184 +46,351 @@ def add_report_to_list(archive):
         return True
     return False
 
-def delete_report(filename):
+
+def delete_report(filename: str) -> bool:
     file_directory = get_path_data() / secure_filename(filename)
     if file_directory.exists():
         os.remove(file_directory)
         return True
     return False
 
-def process_and_save_report(file_name, encoding='latin-1'):
-    path = get_path_data()
-    file_path = path / file_name
 
-    current_subject = None
-    current_academic_period = None
-    max_objectives = 0 
-    
+def process_and_save_report(
+    file_name: str,
+    encoding: str = 'latin-1',
+    uploaded_by_id: int | None = None,
+    uploaded_by_email: str | None = None,
+    uploaded_by_fullname: str | None = None,
+    source_file: str | None = None,
+) -> tuple[bool, str | None, list[str]]:
+    """
+    Returns (True, None, missing_codes) on success, (False, error_code, []) on failure.
+    error_code values: "REPORTE_VACIO" | "ERROR_LECTURA" | "ERROR_DB"
+    missing_codes: career codes present in the file whose Major has no name yet.
+    """
+    file_path = get_path_data() / file_name
     try:
-        with open(file_path, 'r', encoding=encoding) as f:
-            for line in f:
-                # 1. Search asignatura
-                # Example: | ASIGNATURA: (000) CURSO INTRODUCTORIO
-                if "ASIGNATURA:" in line:
-                    match_sub = re.search(r'\|\s*ASIGNATURA:\s*\((\d{3})\)\s*([^\|]+)', line)
-                    if match_sub:
-                        codigo_materia = match_sub.group(1).strip()
-                        nombre_materia = match_sub.group(2).strip()
+        parsed_grades = parse_report(file_path, encoding=encoding)
+    except (OSError, UnicodeDecodeError) as e:
+        logger.error("Error reading report file '%s': %s", file_name, e)
+        return False, "ERROR_LECTURA", []
 
-                        current_subject = SubjectRepository.find_by_code(codigo_materia)
+    if not parsed_grades:
+        logger.warning("Report '%s' produced 0 records — no valid data detected.", file_name)
+        return False, "REPORTE_VACIO", []
 
-                        if not current_subject:
-                            current_subject = SubjectRepository.create(codigo_materia, nombre_materia)
-                        continue
-                
-                # Buscar Periodo
-                if "PERIODO" in line:
-                    match_period = re.search(r'PERIODO\s*:\s*([\w\-]+)', line)
-                    if match_period:
-                        period_code = match_period.group(1).strip()
-                        current_academic_period = AcademicPeriodRepository.find_by_code(period_code)
-                        if not current_academic_period:
-                            current_academic_period = AcademicPeriodRepository.create(period_code)
-                        continue
-                
-                # 2. Search max objectives
-                if "OBJETIVO" in line and current_subject:
-                    max_objectives = len(re.findall(r'\|\d{2}\s', line))
-                    if max_objectives == 0:
-                        max_objectives = -1
-                    continue
+    try:
+        first = parsed_grades[0]
 
-                # 3. Search student data
-                cedula_match = re.search(r'\b([VEJP]-\d+)\b', line)
-                if cedula_match and current_subject:
-                    cedula = cedula_match.group(1)
-                    
-                    # Limpiamos los múltiples espacios para separar fácil
-                    linea_limpia = re.sub(r'\s+', ' ', line.strip())
-                    partes = linea_limpia.split(cedula)
-                    
-                    if len(partes) > 1:
-                        resto = partes[1].strip() # Ej: "610 JAIMES CAMACHO LUSMILA RG 1 1 1 1 1 1 6"
-                        
-                        # Si dice "No Presento", es un caso especial
-                        if "No Presento" in resto:
-                            carrera_codigo = resto.split()[0]
-                            nombre = resto.replace(carrera_codigo, "").replace("No Presento", "").strip()
-                            condicion = "NP"
-                            nota_final = "No Presentó"
-                        else:
-                            tokens = resto.split()
-                            carrera_codigo = tokens[0]
-                            
-                            # La nota final es el último número
-                            nota_cruda = tokens[-1]
-                            # Formateamos al estilo X/Y (Ej: "6/6" o "4/6")
-                            nota_final = f"{nota_cruda}/{max_objectives}"
-                            
-                            # Condición suele ser RG (Regular), RP (Repitiente), etc.
-                            # Asumimos que los 1 y 0 son objetivos, así que buscamos la última letra antes de los números
-                            letras_tokens = [t for t in tokens[1:-1] if not t.isdigit()]
-                            condicion = letras_tokens[-1] if letras_tokens else "N/A"
-                            
-                            # El nombre es todo lo que está entre la carrera y la condición
-                            nombre_tokens = []
-                            for t in tokens[1:]:
-                                if t == condicion or t.isdigit():
-                                    break
-                                nombre_tokens.append(t)
-                            nombre = " ".join(nombre_tokens)
+        # 1. Sede — una sola por archivo
+        sede_id = None
+        if first.universidad:
+            sede = SedeRepository.find_or_create(first.universidad, first.centro_local, first.oficina)
+            sede_id = sede.id
 
-                        # --- GUARDADO EN BASE DE DATOS ---
-                        
-                        # A. Gestionar Carrera (Major)
-                        major = MajorRepository.find_by_code(carrera_codigo)
-                        if not major:
-                            major = MajorRepository.create(carrera_codigo)
+        # 2. Período — uno solo por archivo
+        period = None
+        period_code = first.period_code
+        if period_code:
+            period = AcademicPeriodRepository.find_by_code(period_code, sede_id=sede_id)
+            is_new_period = period is None
+            if is_new_period:
+                period = AcademicPeriodRepository.create(
+                    period_code,
+                    sede_id=sede_id,
+                    uploaded_by_id=uploaded_by_id,
+                    uploaded_by_email=uploaded_by_email,
+                    uploaded_by_fullname=uploaded_by_fullname,
+                    uploaded_at=datetime.now(timezone.utc),
+                    source_file=source_file,
+                )
+            # Auditoría siempre: INSERT si es nuevo, UPDATE si ya existía
+            AcademicPeriodAuditRepository.create(
+                period_code=period_code,
+                operation='INSERT' if is_new_period else 'UPDATE',
+                sede_id=sede_id,
+                user_email=uploaded_by_email,
+                user_fullname=uploaded_by_fullname,
+                operation_at=datetime.now(timezone.utc),
+                source_file=source_file,
+                ip_address=request.remote_addr,
+            )
 
-                        # B. Gestionar Estudiante (Student)
-                        student = StudentRepository.find_by_identification(cedula)
-                        if not student:
-                            student = StudentRepository.create(cedula, nombre, major.id)
-                            
-                        # C. Gestionar Nota (Grade)
-                        # Verificamos si ya existe esta nota para no duplicarla si suben el archivo 2 veces
-                        grade = GradeRepository.find_existing(
-                            student.id,
-                            current_subject.id,
-                            current_academic_period.id if current_academic_period else None
-                        )
-                        
-                        if not grade:
-                            grade = GradeRepository.create(
-                                nota_final,
-                                condicion,
-                                student.id,
-                                current_subject.id,
-                                current_academic_period.id if current_academic_period else None
-                            )
-                        else:
-                            # Si ya existe, la actualizamos por si el nuevo reporte tiene correcciones
-                            grade = GradeRepository.update(grade, nota_final, condicion)
+        period_id = period.id if period else None
 
-            # Hacer un commit final para guardar todas las calificaciones
-            db.session.commit()
-            print("✅ Base de datos poblada exitosamente.")
-            return True
-                
-    except Exception as e:
-        db.session.rollback() # Si algo falla, revertimos los cambios en la BD
-        print(f"❌ Error procesando el archivo para la BD: {e}")
-        return False
+        # Carreras del archivo que aún no tienen nombre registrado.
+        missing_codes = set()
 
-def _format_student_data(student):
+        # 3. Loop de registros (subject/major/student/grade)
+        for record in parsed_grades:
+            subject = SubjectRepository.find_by_code(record.subject_code)
+            if not subject:
+                subject = SubjectRepository.create(record.subject_code, record.subject_name)
+
+            major = MajorRepository.find_by_code(record.carrera_codigo)
+            if not major:
+                major = MajorRepository.create(record.carrera_codigo)
+            if not major.name:
+                missing_codes.add(record.carrera_codigo)
+
+            student = StudentRepository.find_by_identification(record.cedula)
+            if not student:
+                student = StudentRepository.create(record.cedula, record.full_name, major.id)
+
+            grade = GradeRepository.find_existing(student.id, subject.id, period_id)
+            if not grade:
+                GradeRepository.create(
+                    condition=record.condicion,
+                    student_id=student.id,
+                    subject_id=subject.id,
+                    objectives_achieved=record.objectives_achieved,
+                    objectives_total=record.objectives_total,
+                    calificacion=record.calificacion,
+                    academic_period_id=period_id,
+                    absent=record.absent,
+                )
+            else:
+                GradeRepository.update(
+                    grade,
+                    condition=record.condicion,
+                    objectives_achieved=record.objectives_achieved,
+                    objectives_total=record.objectives_total,
+                    calificacion=record.calificacion,
+                    absent=record.absent,
+                )
+
+        db.session.commit()
+        logger.info("Report '%s' processed successfully (%d records).", file_name, len(parsed_grades))
+        return True, None, sorted(missing_codes)
+
+    except SQLAlchemyError as e:
+        db.session.rollback()
+        logger.error("Database error processing report '%s': %s", file_name, e)
+        return False, "ERROR_DB", []
+
+
+def _major_display(major) -> str:
+    return major.name if major.name else major.code
+
+
+def _format_student_data(student: Student, grades=None) -> dict:
     resultado = {
         "cedula": student.identification,
         "nombre": student.full_name,
-        "carrera": student.major.code,
-        "periodos": []
+        "carrera": _major_display(student.major),
+        "periodos": [],
     }
-    
+
+    grade_list = grades if grades is not None else student.grades
     periodos_dict = {}
-    for grade in student.grades:
+    for grade in grade_list:
         period_code = grade.academic_period.code if grade.academic_period else "Desconocido"
-        period_id = grade.academic_period.id if grade.academic_period else None
-                
+        period_id   = grade.academic_period.id   if grade.academic_period else None
+
         if period_code not in periodos_dict:
-            periodos_dict[period_code] = {
-                "id": period_id,
-                "materias": []
-            }
-            
+            periodos_dict[period_code] = {"id": period_id, "materias": []}
+
+        if grade.absent or not grade.objectives_total or not grade.objectives_achieved:
+            nota_final = "No Presento"
+        elif grade.calificacion:
+            nota_final = grade.calificacion
+        else:
+            nota_final = f"{grade.objectives_achieved}/{grade.objectives_total}"
+
         periodos_dict[period_code]["materias"].append({
             "codigo_asignatura": grade.subject.code,
-            "asignatura": grade.subject.name,
-            "condicion": grade.condition,
-            "nota_final": grade.final_score
+            "asignatura":        grade.subject.name,
+            "condicion":         grade.condition,
+            "ausente":           grade.absent,
+            "nota_final":        nota_final,
         })
-        
+
     for period_code, val in periodos_dict.items():
         resultado["periodos"].append({
-            "id": val["id"],
-            "codigo": period_code,
-            "materias": val["materias"]
+            "id":       val["id"],
+            "codigo":   period_code,
+            "materias": val["materias"],
         })
-        
+
     return resultado
 
-def get_student_data_from_db(target_cedula, mode="exact"):
+
+def get_student_data_from_db(target_cedula: str, mode: str = "exact", period_filter: str = None):
     if mode == "prefix":
         students = StudentRepository.find_by_prefix(target_cedula)
         if not students:
             return None
-        return [_format_student_data(student) for student in students]
+        if period_filter:
+            return [
+                _format_student_data(
+                    s,
+                    grades=GradeRepository.find_by_student_and_period(s.id, period_filter),
+                )
+                for s in students
+            ]
+        return [_format_student_data(s) for s in students]
     else:
         student = StudentRepository.find_by_identification(target_cedula)
         if not student:
             return None
+        if period_filter:
+            grades = GradeRepository.find_by_student_and_period(student.id, period_filter)
+            return _format_student_data(student, grades=grades)
         return _format_student_data(student)
 
-def get_all_academic_periods():
+
+def get_students_by_period(
+    period_code: str,
+    init: int,
+    limit: int,
+    order: str,
+    ascending: bool,
+    carrera: str | None,
+    nombre: str | None,
+) -> dict | None:
+    period = AcademicPeriodRepository.find_by_code(period_code)
+    if not period:
+        return None
+
+    students, total = StudentRepository.find_by_period_paginated(
+        period_code, init, limit, order, ascending, carrera, nombre
+    )
+    return {
+        "students": [
+            {
+                "cedula": s.identification,
+                "nombre": s.full_name,
+                "carrera": _major_display(s.major),
+            }
+            for s in students
+        ],
+        "total": total,
+        "init": init,
+        "limit": limit,
+    }
+
+
+def get_all_academic_periods() -> list[dict]:
     periods = AcademicPeriodRepository.get_all()
-    return [{"id": p.id, "code": p.code} for p in periods]
+    return [p.to_dict() for p in periods]
+
+
+def get_all_audit_records() -> list[dict]:
+    records = AcademicPeriodAuditRepository.get_all()
+    return [{k: v for k, v in r.to_dict().items() if k != 'id'} for r in records]
+
+
+###
+#
+# CAREERS (Majors) CRUD
+#
+###
+def get_all_careers() -> list[dict]:
+    return [m.to_dict() for m in MajorRepository.get_all()]
+
+
+def get_career(major_id: int) -> dict | None:
+    major = MajorRepository.find_by_id(major_id)
+    return major.to_dict() if major else None
+
+
+def create_careers(items: list[dict]) -> tuple[list[dict], list[str], str | None]:
+    """Upsert de carreras por lotes en una sola transacción.
+
+    Devuelve (procesadas, fallidas, db_error):
+    - code vacío/ausente -> se omite y se agrega a 'fallidas' como "(vacío)".
+    - code existente -> actualiza su name (upsert).
+    - code nuevo -> crea.
+    db_error es "ERROR_DB" si la transacción falla (con rollback), si no None.
+    """
+    processed: list[dict] = []
+    failed: list[str] = []
+    try:
+        for item in items:
+            if not isinstance(item, dict):
+                failed.append("(vacío)")
+                continue
+            code = (item.get('code') or '').strip()
+            name = (item.get('name') or '').strip() or None
+            if not code:
+                failed.append("(vacío)")
+                continue
+
+            major = MajorRepository.find_by_code(code)
+            if major:
+                MajorRepository.update(major, name=name)
+            else:
+                major = MajorRepository.create(code, name)
+            processed.append(major.to_dict())
+
+        db.session.commit()
+        return processed, failed, None
+    except SQLAlchemyError as e:
+        db.session.rollback()
+        logger.error("Database error creating careers in batch: %s", e)
+        return [], [], "ERROR_DB"
+
+
+def update_career(major_id: int, code: str | None = None, name: str | None = None) -> tuple[dict | None, str | None]:
+    """error_code: "NO_ENCONTRADO" | "CODIGO_DUPLICADO" | "ERROR_DB"."""
+    major = MajorRepository.find_by_id(major_id)
+    if not major:
+        return None, "NO_ENCONTRADO"
+    if code is not None and code != major.code:
+        existing = MajorRepository.find_by_code(code)
+        if existing and existing.id != major_id:
+            return None, "CODIGO_DUPLICADO"
+    try:
+        MajorRepository.update(major, code=code, name=name)
+        db.session.commit()
+        return major.to_dict(), None
+    except SQLAlchemyError as e:
+        db.session.rollback()
+        logger.error("Database error updating career %d: %s", major_id, e)
+        return None, "ERROR_DB"
+
+
+def delete_career(major_id: int) -> str | None:
+    """Returns None on success, error_code on failure.
+    error_code: "NO_ENCONTRADO" | "TIENE_ESTUDIANTES" | "ERROR_DB"."""
+    major = MajorRepository.find_by_id(major_id)
+    if not major:
+        return "NO_ENCONTRADO"
+    if Student.query.filter_by(major_id=major_id).first():
+        return "TIENE_ESTUDIANTES"
+    try:
+        MajorRepository.delete(major)
+        db.session.commit()
+        return None
+    except SQLAlchemyError as e:
+        db.session.rollback()
+        logger.error("Database error deleting career %d: %s", major_id, e)
+        return "ERROR_DB"
+
+
+def delete_academic_period(
+    period_code: str,
+    deleted_by_email: str | None = None,
+    deleted_by_fullname: str | None = None,
+) -> dict | None:
+    result = AcademicPeriodRepository.delete_period_cascade(period_code)
+    if result is None:
+        return None
+    AcademicPeriodAuditRepository.create(
+        period_code=period_code,
+        operation='DELETE',
+        user_email=deleted_by_email,
+        user_fullname=deleted_by_fullname,
+        ip_address=request.remote_addr,
+        affected_rows={
+            'grades_deleted': result['grades_deleted'],
+            'students_deleted': result['students_deleted'],
+        },
+    )
+    try:
+        db.session.commit()
+    except SQLAlchemyError as e:
+        db.session.rollback()
+        logger.error("Database error deleting period '%s': %s", period_code, e)
+        raise
+    return result

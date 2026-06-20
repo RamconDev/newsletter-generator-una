@@ -2,7 +2,29 @@
 
 **Base URL**: `http://127.0.0.1:5000`  
 **Content-Type**: `application/json` (except file uploads)  
-**Auth**: No token layer yet — all endpoints are open.
+**Auth**: Login returns a JWT. Protected endpoints expect `Authorization: Bearer <token>`.
+
+---
+
+## Índice
+
+### Auth
+- [POST `/api/v1/auth/login` — Login](#post-apiv1authlogin--login)
+- [POST `/api/v1/auth/user` — Crear usuario](#post-apiv1authuser--create-user)
+- [GET `/api/v1/auth/user` — Listar usuarios](#get-apiv1authuser--list-all-users)
+- [GET `/api/v1/auth/user/:id` — Obtener usuario por ID](#get-apiv1authuserid--get-user-by-id)
+- [PUT `/api/v1/auth/user/:id` — Actualizar usuario](#put-apiv1authuserid--update-user)
+- [DELETE `/api/v1/auth/user/:id` — Eliminar usuario](#delete-apiv1authuserid--delete-user)
+- [POST `/api/v1/auth/user/:id/role` — Asignar rol](#post-apiv1authuseridRole--assign-role)
+- [DELETE `/api/v1/auth/user/:id/role/:role_name` — Quitar rol](#delete-apiv1authuseridrolerole_name--remove-role)
+
+### Reports
+- [POST `/api/v1/reports` — Subir reporte](#post-apiv1reports--upload-report-file)
+- [GET `/api/v1/reports` — Listar períodos académicos](#get-apiv1reports--list-academic-periods)
+- [GET `/api/v1/academic-periods` — Periodos académicos](#get-apiv1academic-periods--list-academic-periods)
+- [DELETE `/api/v1/academic-periods/:period_code` — Eliminar período](#delete-apiv1academic-periodsperiod_code--delete-academic-period)
+- [GET `/api/v1/academic-periods/:period_code/students` — Listar estudiantes por período](#get-apiv1academic-periodsperiod_codestudents--list-students-by-period)
+- [GET `/api/v1/students/:identification` — Buscar estudiante](#get-apiv1studentsidentification--search-student-by-cédula)
 
 ---
 
@@ -14,6 +36,62 @@ New users are automatically assigned the `Viewer` role on creation.
 ---
 
 ## Auth Endpoints
+
+### POST `/api/v1/auth/login` — Login
+
+Validates `username` + `password` and returns a signed JWT. The token expires after the time configured in `JWT_EXP_HOURS` (default: 1 hour).
+
+**Request body**
+
+| Field | Type | Required |
+|-------|------|----------|
+| `username` | string | yes |
+| `password` | string | yes |
+
+```bash
+curl -X POST http://127.0.0.1:5000/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username": "ozambrano", "password": "secret123"}'
+```
+
+**Response `200`**
+```json
+{
+  "status": "success",
+  "message": "Login exitoso.",
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+}
+```
+
+The decoded payload contains:
+
+| Claim | Value |
+|-------|-------|
+| `sub` | user ID |
+| `email` | user email |
+| `firstname` | first name |
+| `lastname` | last name |
+| `roles` | array of role names |
+| `exp` | expiration timestamp (UTC) |
+
+**Response `400`** — missing fields
+```json
+{ "status": "error", "message": "username y password son requeridos." }
+```
+
+**Response `401`** — wrong credentials
+```json
+{ "status": "error", "message": "Credenciales inválidas." }
+```
+
+**Environment variables**
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `JWT_SECRET_KEY` | `jwt_secret_key` | Signing secret |
+| `JWT_EXP_HOURS` | `1` | Token lifetime in hours |
+
+---
 
 ### POST `/api/v1/auth/user` — Create user
 
@@ -248,12 +326,14 @@ curl -X DELETE http://127.0.0.1:5000/api/v1/auth/user/1/role/Admin
 
 ### POST `/api/v1/reports` — Upload report file
 
+**Roles**: `Admin`, `Editor`
+
 Uploads, validates, and processes a `.REP` academic report file. The file must:
 - Have `.rep` extension
 - Be under 5 MB
 - Contain `"UNIVERSIDAD NACIONAL ABIERTA"` in the first 256 bytes (plain text, `latin-1` encoded)
 
-The server extracts student, subject, grade, major, and academic period data and persists them to the database.
+The server extracts student, subject, grade, major, and academic period data and persists them to the database. When a new academic period is created, the authenticated user's ID, the upload timestamp, and the source filename are recorded on the period (`uploaded_by_id`, `uploaded_at`, `source_file`). If the period already existed from a previous upload, the original uploader and filename are preserved.
 
 **Request**: `multipart/form-data`
 
@@ -302,55 +382,225 @@ curl -X POST http://127.0.0.1:5000/api/v1/reports \
 
 ---
 
-### GET `/api/v1/reports` — List uploaded reports
+### GET `/api/v1/reports` — List academic periods
 
-Returns the filenames of all `.REP` files stored in the `data/` directory.
+**Roles**: `Admin`
 
-```bash
-curl http://127.0.0.1:5000/api/v1/reports
-```
-
-**Response `200`**
-```json
-{
-  "name_files": ["reporte_2023-1.rep", "reporte_2023-2.rep"]
-}
-```
-
----
-
-### GET `/api/v1/academic-periods` — List academic periods
-
-Returns all academic periods found in the database (populated after uploading reports).
+Returns all academic periods stored in the database. The `id` field is excluded from each record.
 
 ```bash
-curl http://127.0.0.1:5000/api/v1/academic-periods
+curl http://127.0.0.1:5000/api/v1/reports \
+  -H "Authorization: Bearer <token>"
 ```
 
 **Response `200`**
 ```json
 {
   "status": "success",
-  "message": "Academic periods list.",
+  "message": "Listado de períodos académicos.",
   "data": {
-    "academic_periods": ["2023-1", "2023-2", "2024-1"]
+    "academic_periods": [
+      {
+        "code": "2023-1",
+        "uploaded_by_id": 3,
+        "uploaded_at": "2026-05-05T14:30:00",
+        "source_file": "reporte_2023-1.rep"
+      },
+      {
+        "code": "2023-2",
+        "uploaded_by_id": null,
+        "uploaded_at": null,
+        "source_file": null
+      }
+    ]
   }
 }
 ```
 
+**Response `403`** — insufficient role
+```json
+{ "status": "error", "code": "ACCESO_DENEGADO", "message": "Acceso denegado." }
+```
+
+---
+
+### GET `/api/v1/academic-periods` — List academic periods
+
+**Roles**: `Admin`, `Editor`, `Viewer`
+
+Returns all academic periods found in the database (populated after uploading reports).
+
+```bash
+curl http://127.0.0.1:5000/api/v1/academic-periods \
+  -H "Authorization: Bearer <token>"
+```
+
+**Response `200`**
+```json
+{
+  "status": "success",
+  "message": "Períodos académicos.",
+  "data": {
+    "academic_periods": [
+      {
+        "id": 1,
+        "code": "2023-1",
+        "uploaded_by_id": 3,
+        "uploaded_at": "2026-05-05T14:30:00",
+        "source_file": "reporte_2023-1.rep"
+      },
+      {
+        "id": 2,
+        "code": "2023-2",
+        "uploaded_by_id": null,
+        "uploaded_at": null,
+        "source_file": null
+      }
+    ]
+  }
+}
+```
+
+> `uploaded_by_id` is `null` for periods created before tracking was added, and for periods where `academic_period_id` was already set in a prior upload.
+
 **Response `500`** — unexpected error
 ```json
-{ "status": "error", "message": "Error al obtener los periodos académicos: <detail>" }
+{ "status": "error", "message": "Error al obtener los períodos académicos." }
+```
+
+---
+
+### DELETE `/api/v1/academic-periods/:period_code` — Delete academic period
+
+**Roles**: `Admin`
+
+Deletes an academic period and all data it contains in cascade:
+1. All grades with `academic_period_id` matching the period are deleted.
+2. Students left with no remaining grades anywhere in the system are also deleted.
+3. The academic period record itself is deleted.
+
+> This operation is irreversible. Students and subjects shared with other periods are **not** affected.
+
+**Path params**
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `period_code` | string | Academic period code (e.g. `2023-1`) |
+
+```bash
+curl -X DELETE http://127.0.0.1:5000/api/v1/academic-periods/2023-1 \
+  -H "Authorization: Bearer <token>"
+```
+
+**Response `200`**
+```json
+{
+  "status": "success",
+  "message": "Período '2023-1' eliminado correctamente.",
+  "data": {
+    "period_code": "2023-1",
+    "grades_deleted": 142,
+    "students_deleted": 38
+  }
+}
+```
+
+**Response `404`** — period not found
+```json
+{ "status": "error", "message": "Período académico '2023-1' no encontrado." }
+```
+
+**Response `403`** — insufficient role
+```json
+{ "status": "error", "code": "ACCESO_DENEGADO", "message": "Acceso denegado." }
+```
+
+**Response `500`** — unexpected error
+```json
+{ "status": "error", "message": "Error al eliminar el período académico." }
+```
+
+---
+
+### GET `/api/v1/academic-periods/:period_code/students` — List students by period
+
+Returns a paginated, filterable, and sortable list of students who have at least one grade registered in the given academic period.
+
+**Path params**
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `period_code` | string | Academic period code (e.g. `2023-1`) |
+
+**Query params**
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `init` | int | `0` | Offset — number of records to skip |
+| `limit` | int | `20` | Page size (1–100) |
+| `order` | string | `nombre` | Sort field: `cedula`, `nombre`, `carrera` |
+| `asc` | bool | `true` | Sort direction: `true` = ASC, `false` = DESC |
+| `carrera` | string | — | Exact filter by major code (e.g. `610`) |
+| `nombre` | string | — | Partial case-insensitive filter on full name |
+
+```bash
+# Default — first 20 students sorted by name ASC
+curl http://127.0.0.1:5000/api/v1/academic-periods/2023-1/students
+
+# Page 2, sorted by cédula DESC
+curl "http://127.0.0.1:5000/api/v1/academic-periods/2023-1/students?init=20&limit=20&order=cedula&asc=false"
+
+# Filter by major + partial name
+curl "http://127.0.0.1:5000/api/v1/academic-periods/2023-1/students?carrera=610&nombre=garcia"
+```
+
+**Response `200`**
+```json
+{
+  "status": "success",
+  "message": "Students list.",
+  "data": {
+    "students": [
+      { "cedula": "V-12345678", "nombre": "Juan García", "carrera": "610" },
+      { "cedula": "V-87654321", "nombre": "María López", "carrera": "810" }
+    ],
+    "total": 85,
+    "init": 0,
+    "limit": 20
+  }
+}
+```
+
+> `total` reflects the full count after filters are applied, not just the current page size. Use it to calculate the number of pages: `ceil(total / limit)`.
+
+**Response `400`** — invalid query param
+```json
+{ "status": "error", "message": "'limit' debe ser un entero entre 1 y 100." }
+```
+
+**Response `404`** — period not found
+```json
+{ "status": "error", "message": "Período académico '9999-9' no encontrado." }
 ```
 
 ---
 
 ### GET `/api/v1/students/:identification` — Search student by cédula
 
-Looks up a student by their Venezuelan national ID (`cédula`).
+Looks up a student by their Venezuelan national ID (`cédula`). Optionally filter by academic period using the `?period` query param — the filter is applied at the database level.
+
+**Query params**
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `period` | string | no | Academic period code (e.g. `2023-1`). If omitted, all periods are returned. |
 
 ```bash
-curl http://127.0.0.1:5000/api/v1/students/12345678
+# All periods
+curl http://127.0.0.1:5000/api/v1/students/V-12345678
+
+# Single period
+curl http://127.0.0.1:5000/api/v1/students/V-12345678?period=2023-1
 ```
 
 **Response `200`**
@@ -359,15 +609,28 @@ curl http://127.0.0.1:5000/api/v1/students/12345678
   "status": "success",
   "message": "Student found.",
   "data": {
-    "identification": "12345678",
-    "name": "Juan Pérez",
-    "major": "Administración",
-    "grades": [
-      { "subject_code": "010", "subject_name": "Matemáticas I", "period": "2023-1", "grade": 14 }
+    "cedula": "V-12345678",
+    "nombre": "Juan Pérez",
+    "carrera": "610",
+    "periodos": [
+      {
+        "id": 1,
+        "codigo": "2023-1",
+        "materias": [
+          {
+            "codigo_asignatura": "010",
+            "asignatura": "Curso Introductorio",
+            "condicion": "RG",
+            "nota_final": "6/6"
+          }
+        ]
+      }
     ]
   }
 }
 ```
+
+> When `?period` is provided and the student has no grades in that period, `periodos` is returned as an empty array `[]`.
 
 **Response `404`**
 ```json
