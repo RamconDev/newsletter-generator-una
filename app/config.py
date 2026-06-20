@@ -1,7 +1,15 @@
 import os
+import ssl
+from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
+
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# pg8000 no entiende los parámetros de SSL estilo libpq/psycopg2 en la query
+# string (p. ej. ?sslmode=require, channel_binding). El SSL se configura vía
+# connect_args (ssl_context). Estos se eliminan de la URL y se traducen.
+_LIBPQ_ONLY_PARAMS = {"sslmode", "channel_binding"}
 
 
 def _normalize_pg_url(url: str | None) -> str | None:
@@ -10,8 +18,29 @@ def _normalize_pg_url(url: str | None) -> str | None:
     if url.startswith("postgres://"):
         url = url.replace("postgres://", "postgresql://", 1)
     if url.startswith("postgresql://"):
-        return url.replace("postgresql://", "postgresql+pg8000://", 1)
+        url = url.replace("postgresql://", "postgresql+pg8000://", 1)
+
+    # Remover params que pg8000 no acepta para que no lleguen a connect().
+    parts = urlsplit(url)
+    if parts.query:
+        kept = [(k, v) for k, v in parse_qsl(parts.query) if k not in _LIBPQ_ONLY_PARAMS]
+        url = urlunsplit(parts._replace(query=urlencode(kept)))
     return url
+
+
+def _wants_ssl(url: str | None) -> bool:
+    """True si la URL original pedía SSL (sslmode != disable)."""
+    if not url:
+        return False
+    query = dict(parse_qsl(urlsplit(url).query))
+    return query.get("sslmode", "").lower() not in ("", "disable")
+
+
+def _pg_engine_options(raw_url: str | None) -> dict:
+    """connect_args para pg8000 con SSL si la URL lo pedía."""
+    if _wants_ssl(raw_url):
+        return {"connect_args": {"ssl_context": ssl.create_default_context()}}
+    return {}
 
 
 class BaseConfig:
@@ -39,26 +68,27 @@ class BaseConfig:
     ALLOWED_EXTENSIONS = set(os.getenv("ALLOWED_EXTENSIONS", "rep").split(','))
 
 
+_RAW_DB_URL = os.getenv("DATABASE_URL") or os.getenv("URL_DB") or os.getenv("DB_ENGINE")
+
+
 class ProductionConfig(BaseConfig):
     DEBUG = False
     TESTING = False
 
     # Prefer a single DATABASE_URL env var. Backwards compatible fallbacks: URL_DB or DB_ENGINE.
-    DATABASE_URL = _normalize_pg_url(
-        os.getenv("DATABASE_URL") or os.getenv("URL_DB") or os.getenv("DB_ENGINE")
-    )
+    DATABASE_URL = _normalize_pg_url(_RAW_DB_URL)
 
     SQLALCHEMY_DATABASE_URI = DATABASE_URL or ""
+    SQLALCHEMY_ENGINE_OPTIONS = _pg_engine_options(_RAW_DB_URL)
 
 
 class DevelopmentConfig(BaseConfig):
     DEBUG = True
 
-    DATABASE_URL = _normalize_pg_url(
-        os.getenv("DATABASE_URL") or os.getenv("URL_DB") or os.getenv("DB_ENGINE")
-    )
+    DATABASE_URL = _normalize_pg_url(_RAW_DB_URL)
 
     SQLALCHEMY_DATABASE_URI = DATABASE_URL or "sqlite:///dev.db"
+    SQLALCHEMY_ENGINE_OPTIONS = _pg_engine_options(_RAW_DB_URL)
 
 
 class TestingConfig(BaseConfig):
