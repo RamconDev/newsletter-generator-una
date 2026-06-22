@@ -40,7 +40,8 @@ CREATE TABLE revoked_tokens (
 
 CREATE TABLE majors (
     id   SERIAL PRIMARY KEY,
-    code VARCHAR(10) NOT NULL UNIQUE
+    code VARCHAR(10)  NOT NULL UNIQUE,
+    name VARCHAR(150)
 );
 
 CREATE TABLE students (

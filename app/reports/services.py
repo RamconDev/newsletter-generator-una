@@ -62,21 +62,22 @@ def process_and_save_report(
     uploaded_by_email: str | None = None,
     uploaded_by_fullname: str | None = None,
     source_file: str | None = None,
-) -> tuple[bool, str | None]:
+) -> tuple[bool, str | None, list[str]]:
     """
-    Returns (True, None) on success, (False, error_code) on failure.
+    Returns (True, None, missing_codes) on success, (False, error_code, []) on failure.
     error_code values: "REPORTE_VACIO" | "ERROR_LECTURA" | "ERROR_DB"
+    missing_codes: career codes present in the file whose Major has no name yet.
     """
     file_path = get_path_data() / file_name
     try:
         parsed_grades = parse_report(file_path, encoding=encoding)
     except (OSError, UnicodeDecodeError) as e:
         logger.error("Error reading report file '%s': %s", file_name, e)
-        return False, "ERROR_LECTURA"
+        return False, "ERROR_LECTURA", []
 
     if not parsed_grades:
         logger.warning("Report '%s' produced 0 records — no valid data detected.", file_name)
-        return False, "REPORTE_VACIO"
+        return False, "REPORTE_VACIO", []
 
     try:
         first = parsed_grades[0]
@@ -117,6 +118,9 @@ def process_and_save_report(
 
         period_id = period.id if period else None
 
+        # Carreras del archivo que aún no tienen nombre registrado.
+        missing_codes = set()
+
         # 3. Loop de registros (subject/major/student/grade)
         for record in parsed_grades:
             subject = SubjectRepository.find_by_code(record.subject_code)
@@ -126,6 +130,8 @@ def process_and_save_report(
             major = MajorRepository.find_by_code(record.carrera_codigo)
             if not major:
                 major = MajorRepository.create(record.carrera_codigo)
+            if not major.name:
+                missing_codes.add(record.carrera_codigo)
 
             student = StudentRepository.find_by_identification(record.cedula)
             if not student:
@@ -155,19 +161,23 @@ def process_and_save_report(
 
         db.session.commit()
         logger.info("Report '%s' processed successfully (%d records).", file_name, len(parsed_grades))
-        return True, None
+        return True, None, sorted(missing_codes)
 
     except SQLAlchemyError as e:
         db.session.rollback()
         logger.error("Database error processing report '%s': %s", file_name, e)
-        return False, "ERROR_DB"
+        return False, "ERROR_DB", []
+
+
+def _major_display(major) -> str:
+    return major.name if major.name else major.code
 
 
 def _format_student_data(student: Student, grades=None) -> dict:
     resultado = {
         "cedula": student.identification,
         "nombre": student.full_name,
-        "carrera": student.major.code,
+        "carrera": _major_display(student.major),
         "periodos": [],
     }
 
@@ -250,7 +260,7 @@ def get_students_by_period(
             {
                 "cedula": s.identification,
                 "nombre": s.full_name,
-                "carrera": s.major.code,
+                "carrera": _major_display(s.major),
             }
             for s in students
         ],
@@ -268,6 +278,94 @@ def get_all_academic_periods() -> list[dict]:
 def get_all_audit_records() -> list[dict]:
     records = AcademicPeriodAuditRepository.get_all()
     return [{k: v for k, v in r.to_dict().items() if k != 'id'} for r in records]
+
+
+###
+#
+# CAREERS (Majors) CRUD
+#
+###
+def get_all_careers() -> list[dict]:
+    return [m.to_dict() for m in MajorRepository.get_all()]
+
+
+def get_career(major_id: int) -> dict | None:
+    major = MajorRepository.find_by_id(major_id)
+    return major.to_dict() if major else None
+
+
+def create_careers(items: list[dict]) -> tuple[list[dict], list[str], str | None]:
+    """Upsert de carreras por lotes en una sola transacción.
+
+    Devuelve (procesadas, fallidas, db_error):
+    - code vacío/ausente -> se omite y se agrega a 'fallidas' como "(vacío)".
+    - code existente -> actualiza su name (upsert).
+    - code nuevo -> crea.
+    db_error es "ERROR_DB" si la transacción falla (con rollback), si no None.
+    """
+    processed: list[dict] = []
+    failed: list[str] = []
+    try:
+        for item in items:
+            if not isinstance(item, dict):
+                failed.append("(vacío)")
+                continue
+            code = (item.get('code') or '').strip()
+            name = (item.get('name') or '').strip() or None
+            if not code:
+                failed.append("(vacío)")
+                continue
+
+            major = MajorRepository.find_by_code(code)
+            if major:
+                MajorRepository.update(major, name=name)
+            else:
+                major = MajorRepository.create(code, name)
+            processed.append(major.to_dict())
+
+        db.session.commit()
+        return processed, failed, None
+    except SQLAlchemyError as e:
+        db.session.rollback()
+        logger.error("Database error creating careers in batch: %s", e)
+        return [], [], "ERROR_DB"
+
+
+def update_career(major_id: int, code: str | None = None, name: str | None = None) -> tuple[dict | None, str | None]:
+    """error_code: "NO_ENCONTRADO" | "CODIGO_DUPLICADO" | "ERROR_DB"."""
+    major = MajorRepository.find_by_id(major_id)
+    if not major:
+        return None, "NO_ENCONTRADO"
+    if code is not None and code != major.code:
+        existing = MajorRepository.find_by_code(code)
+        if existing and existing.id != major_id:
+            return None, "CODIGO_DUPLICADO"
+    try:
+        MajorRepository.update(major, code=code, name=name)
+        db.session.commit()
+        return major.to_dict(), None
+    except SQLAlchemyError as e:
+        db.session.rollback()
+        logger.error("Database error updating career %d: %s", major_id, e)
+        return None, "ERROR_DB"
+
+
+def delete_career(major_id: int) -> str | None:
+    """Returns None on success, error_code on failure.
+    error_code: "NO_ENCONTRADO" | "TIENE_ESTUDIANTES" | "ERROR_DB"."""
+    major = MajorRepository.find_by_id(major_id)
+    if not major:
+        return "NO_ENCONTRADO"
+    if Student.query.filter_by(major_id=major_id).first():
+        return "TIENE_ESTUDIANTES"
+    try:
+        MajorRepository.delete(major)
+        db.session.commit()
+        return None
+    except SQLAlchemyError as e:
+        db.session.rollback()
+        logger.error("Database error deleting career %d: %s", major_id, e)
+        return "ERROR_DB"
 
 
 def delete_academic_period(
