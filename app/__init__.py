@@ -21,6 +21,12 @@ def _validate_db_connection(app):
     _logger = logging.getLogger(__name__)
     try:
         with app.app_context():
+            # pg8000 no activa 'insertmanyvalues' en INSERTs sin RETURNING: cae a
+            # executemany clásico (un round-trip por fila), lo que vuelve la ingesta
+            # masiva inviable contra una DB remota. Este flag fuerza el INSERT
+            # multi-fila (una sola sentencia). No afecta a SQLite.
+            if db.engine.dialect.name == 'postgresql':
+                db.engine.dialect.use_insertmanyvalues_wo_returning = True
             db.session.execute(text("SELECT 1"))
         _logger.info("Conexión a la base de datos establecida correctamente.")
     except (OperationalError, ProgrammingError) as e:

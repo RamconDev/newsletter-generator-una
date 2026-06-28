@@ -9,7 +9,7 @@ service controls the transaction boundary with a single commit.
 
 from datetime import datetime, timezone
 
-from sqlalchemy import asc as asc_fn, desc as desc_fn, func
+from sqlalchemy import asc as asc_fn, desc as desc_fn, func, insert
 from sqlalchemy.orm import joinedload
 
 from app.extensions import db
@@ -29,6 +29,11 @@ class SubjectRepository:
         return Subject.query.filter_by(code=code).first()
 
     @staticmethod
+    def get_all_map() -> dict:
+        """{code: Subject} para todos los subjects (1 SELECT)."""
+        return {s.code: s for s in Subject.query.all()}
+
+    @staticmethod
     def create(code: str, name: str) -> Subject:
         subject = Subject(code=code, name=name)
         db.session.add(subject)
@@ -46,6 +51,11 @@ class MajorRepository:
     @staticmethod
     def find_by_id(major_id: int) -> Major:
         return db.session.get(Major, major_id)
+
+    @staticmethod
+    def get_all_map() -> dict:
+        """{code: Major} para todos los majors (1 SELECT)."""
+        return {m.code: m for m in Major.query.all()}
 
     @staticmethod
     def get_all() -> list:
@@ -91,6 +101,16 @@ class StudentRepository:
     @staticmethod
     def find_by_id(student_id: int) -> Student:
         return db.session.get(Student, student_id)
+
+    @staticmethod
+    def get_map_for(identifications) -> dict:
+        """{identification: Student} para las cédulas dadas, sin joinedload.
+        Pensado para ingesta: sólo columnas base, acotado con IN (...)."""
+        ids = list({i for i in identifications if i})
+        if not ids:
+            return {}
+        students = Student.query.filter(Student.identification.in_(ids)).all()
+        return {s.identification: s for s in students}
 
     @staticmethod
     def find_by_prefix(prefix: str) -> list:
@@ -193,6 +213,12 @@ class AcademicPeriodRepository:
     @staticmethod
     def find_by_code(code: str, sede_id: int | None = None) -> AcademicPeriod:
         return AcademicPeriod.query.filter_by(code=code, sede_id=sede_id).first()
+
+    @staticmethod
+    def exists_by_code(code: str) -> bool:
+        return db.session.query(
+            AcademicPeriod.query.filter_by(code=code).exists()
+        ).scalar()
 
     @staticmethod
     def create(
@@ -311,6 +337,29 @@ class GradeRepository:
             subject_id=subject_id,
             academic_period_id=academic_period_id,
         ).first()
+
+    @staticmethod
+    def get_existing_map_for_period(academic_period_id: int) -> dict:
+        """{(student_id, subject_id, period_id): Grade} para un período (1 SELECT)."""
+        if academic_period_id is None:
+            return {}
+        grades = Grade.query.filter_by(academic_period_id=academic_period_id).all()
+        return {
+            (g.student_id, g.subject_id, g.academic_period_id): g
+            for g in grades
+        }
+
+    @staticmethod
+    def bulk_create(mappings: list) -> None:
+        """INSERT masivo de notas nuevas (Grade es hoja, no se repuebla PK).
+
+        Usa insert(Grade).values(list): un único INSERT ... VALUES (...),(...)
+        en una sola sentencia. Con execute(insert(), list) pg8000 fragmenta en
+        ~3 filas por round-trip cuando los dicts tienen NULLs heterogéneos
+        (calificacion/academic_period_id), lo que con Neon remoto convertía la
+        carga de ~1000 notas en >90s. values(list) lo resuelve en una sentencia."""
+        if mappings:
+            db.session.execute(insert(Grade).values(mappings))
 
     @staticmethod
     def create(

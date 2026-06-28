@@ -118,46 +118,83 @@ def process_and_save_report(
 
         period_id = period.id if period else None
 
+        # === Fase 0: precarga en memoria (1 SELECT por tabla) ===
+        subjects_map = SubjectRepository.get_all_map()
+        majors_map   = MajorRepository.get_all_map()
+        students_map = StudentRepository.get_map_for(r.cedula for r in parsed_grades)
+        grades_map   = GradeRepository.get_existing_map_for_period(period_id)
+
         # Carreras del archivo que aún no tienen nombre registrado.
         missing_codes = set()
 
-        # 3. Loop de registros (subject/major/student/grade)
+        # === Fase 1: Subjects/Majors nuevos (add_all + un flush) ===
+        new_subjects = {}
+        new_majors = {}
         for record in parsed_grades:
-            subject = SubjectRepository.find_by_code(record.subject_code)
-            if not subject:
-                subject = SubjectRepository.create(record.subject_code, record.subject_name)
+            if record.subject_code not in subjects_map and record.subject_code not in new_subjects:
+                new_subjects[record.subject_code] = Subject(
+                    code=record.subject_code, name=record.subject_name
+                )
+            if record.carrera_codigo not in majors_map and record.carrera_codigo not in new_majors:
+                new_majors[record.carrera_codigo] = Major(code=record.carrera_codigo)
 
-            major = MajorRepository.find_by_code(record.carrera_codigo)
-            if not major:
-                major = MajorRepository.create(record.carrera_codigo)
+        if new_subjects or new_majors:
+            db.session.add_all([*new_subjects.values(), *new_majors.values()])
+            db.session.flush()
+        subjects_map.update(new_subjects)
+        majors_map.update(new_majors)
+
+        for record in parsed_grades:
+            major = majors_map[record.carrera_codigo]
             if not major.name:
                 missing_codes.add(record.carrera_codigo)
 
-            student = StudentRepository.find_by_identification(record.cedula)
-            if not student:
-                student = StudentRepository.create(record.cedula, record.full_name, major.id)
+        # === Fase 2: Students nuevos (add_all + un flush) ===
+        new_students = {}
+        for record in parsed_grades:
+            if record.cedula in students_map or record.cedula in new_students:
+                continue
+            major = majors_map[record.carrera_codigo]
+            new_students[record.cedula] = Student(
+                identification=record.cedula,
+                full_name=record.full_name,
+                major_id=major.id,
+            )
 
-            grade = GradeRepository.find_existing(student.id, subject.id, period_id)
-            if not grade:
-                GradeRepository.create(
-                    condition=record.condicion,
-                    student_id=student.id,
-                    subject_id=subject.id,
-                    objectives_achieved=record.objectives_achieved,
-                    objectives_total=record.objectives_total,
-                    calificacion=record.calificacion,
-                    academic_period_id=period_id,
-                    absent=record.absent,
-                )
+        if new_students:
+            db.session.add_all(new_students.values())
+            db.session.flush()
+        students_map.update(new_students)
+
+        # === Fase 3: Grades upsert (UPDATE en memoria + bulk insert) ===
+        new_grades_by_key = {}  # "última gana" para claves repetidas en el archivo
+        for record in parsed_grades:
+            student = students_map[record.cedula]
+            subject = subjects_map[record.subject_code]
+            key = (student.id, subject.id, period_id)
+
+            existing = grades_map.get(key)
+            if existing is not None:
+                # Update en memoria; el commit final persiste todo en un solo batch
+                # (evita un flush por fila como haría GradeRepository.update).
+                existing.condition           = record.condicion
+                existing.absent              = record.absent
+                existing.objectives_achieved = record.objectives_achieved
+                existing.objectives_total    = record.objectives_total
+                existing.calificacion        = record.calificacion
             else:
-                GradeRepository.update(
-                    grade,
-                    condition=record.condicion,
-                    objectives_achieved=record.objectives_achieved,
-                    objectives_total=record.objectives_total,
-                    calificacion=record.calificacion,
-                    absent=record.absent,
-                )
+                new_grades_by_key[key] = {
+                    "condition": record.condicion,
+                    "student_id": student.id,
+                    "subject_id": subject.id,
+                    "academic_period_id": period_id,
+                    "absent": record.absent,
+                    "objectives_achieved": record.objectives_achieved,
+                    "objectives_total": record.objectives_total,
+                    "calificacion": record.calificacion,
+                }
+
+        GradeRepository.bulk_create(list(new_grades_by_key.values()))
 
         db.session.commit()
         logger.info("Report '%s' processed successfully (%d records).", file_name, len(parsed_grades))
@@ -248,8 +285,7 @@ def get_students_by_period(
     carrera: str | None,
     nombre: str | None,
 ) -> dict | None:
-    period = AcademicPeriodRepository.find_by_code(period_code)
-    if not period:
+    if not AcademicPeriodRepository.exists_by_code(period_code):
         return None
 
     students, total = StudentRepository.find_by_period_paginated(
