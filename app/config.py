@@ -41,7 +41,11 @@ def _pg_engine_options(raw_url: str | None) -> dict:
     conexiones idle que Neon cierra; SSL se añade si la URL lo pedía."""
     if not raw_url:
         return {}
-    options = {"pool_pre_ping": True}
+    options = {
+        "pool_pre_ping": True,   # descarta conexiones idle que Neon cerró
+        "pool_recycle": 300,     # recicla conexiones antes del cierre por inactividad de Neon
+        "pool_timeout": 30,      # no esperar indefinidamente una conexión del pool
+    }
     if _wants_ssl(raw_url):
         options["connect_args"] = {"ssl_context": ssl.create_default_context()}
     return options
