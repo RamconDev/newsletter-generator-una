@@ -344,5 +344,12 @@ def career_delete(major_id):
 @require_role('Admin')
 def user_audit_list():
     records = UserAudit.query.order_by(UserAudit.operation_at.desc()).all()
-    data = [{k: v for k, v in r.to_dict().items() if k != 'id'} for r in records]
+    data = [{
+        "ip_address": r.ip_address,
+        "operation": r.operation,
+        "operation_at": r.operation_at.isoformat() if r.operation_at else None,
+        "user_email": r.actor_email,
+        "user_modify": r.user_email,
+        "descripcion": r.affected_data or [],
+    } for r in records]
     return api_success(data={"audit_records": data}, mensaje="Historial de auditoría de usuarios.")
