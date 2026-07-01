@@ -8,7 +8,16 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.errors import api_error, api_success
 from app.extensions import db
 from app.auth import auth_bp as auth
-from app.auth.jwt_utils import require_auth, require_role, current_user_id, current_user_has_role, _build_token, _decode_token
+from app.auth.jwt_utils import (
+    require_auth,
+    require_role,
+    current_user_id,
+    current_user_email,
+    current_user_fullname,
+    current_user_has_role,
+    _build_token,
+    _decode_token,
+)
 from app.models import UserAudit
 from .models.user import User
 from .models.role import Role
@@ -24,10 +33,28 @@ def _audit_user(username, operation, email=None, fullname=None, affected_data=No
         operation=operation,
         user_email=email,
         user_fullname=fullname,
+        actor_email=current_user_email(),
+        actor_fullname=current_user_fullname(),
         operation_at=datetime.now(timezone.utc),
         ip_address=request.remote_addr,
         affected_data=affected_data,
     ))
+
+
+def _describe_changes(before, after):
+    labels = {
+        'firstname': 'nombre',
+        'lastname': 'apellido',
+        'email': 'correo',
+        'phone': 'teléfono',
+        'role': 'rol',
+    }
+    cambios = []
+    for field, label in labels.items():
+        old, new = before.get(field), after.get(field)
+        if old != new:
+            cambios.append(f"Modificó {label}: antes='{old}' después='{new}'")
+    return cambios
 
 
 def _validate_email(email: str) -> bool:
@@ -150,7 +177,9 @@ def user_create():
         new_user.set_role(role)
 
         db.session.add(new_user)
-        _audit_user(new_user.username, 'INSERT', new_user.email, f"{new_user.firstname} {new_user.lastname}")
+        fullname = f"{new_user.firstname} {new_user.lastname}"
+        _audit_user(new_user.username, 'INSERT', new_user.email, fullname,
+                    affected_data=[f"Creación de usuario {fullname} ({new_user.email})"])
         db.session.commit()
 
         return api_success(data=new_user.to_dict(), mensaje="Usuario registrado correctamente.", http_status=201)
@@ -225,18 +254,35 @@ def user_update(user_id):
         if not valid:
             return api_error("PASSWORD_DEBIL", msg, campo="password")
 
+    before = {
+        'firstname': user.firstname,
+        'lastname': user.lastname,
+        'email': user.email,
+        'phone': user.phone,
+    }
+
     updatable = ('firstname', 'lastname', 'email', 'phone')
     for field in updatable:
         if field in data and data[field] is not None:
             setattr(user, field, data[field])
 
+    after = {
+        'firstname': user.firstname,
+        'lastname': user.lastname,
+        'email': user.email,
+        'phone': user.phone,
+    }
+    descripcion = _describe_changes(before, after)
+
     if data.get('password'):
         user.set_password(data['password'])
+        descripcion.append("Modificó la contraseña")
 
     user.modificated_at = datetime.now(timezone.utc)
 
     try:
-        _audit_user(user.username, 'UPDATE', user.email, f"{user.firstname} {user.lastname}")
+        _audit_user(user.username, 'UPDATE', user.email, f"{user.firstname} {user.lastname}",
+                    affected_data=descripcion)
         db.session.commit()
         return api_success(data=user.to_dict(), mensaje="Usuario actualizado correctamente.")
     except SQLAlchemyError:
@@ -262,7 +308,8 @@ def user_delete(user_id):
         email = user.email
         fullname = f"{user.firstname} {user.lastname}"
         db.session.delete(user)
-        _audit_user(username, 'DELETE', email, fullname, affected_data={'deleted_id': user_id})
+        _audit_user(username, 'DELETE', email, fullname,
+                    affected_data=[f"Eliminación de usuario {fullname} ({email})"])
         db.session.commit()
         return api_success(data={"id": user_id, "username": username}, mensaje="Usuario eliminado correctamente.")
     except SQLAlchemyError:
@@ -317,7 +364,11 @@ def user_assign_role(user_id):
             )
 
     try:
+        old_role = user.role.name if user.role else None
         user.set_role(role)
+        descripcion = _describe_changes({'role': old_role}, {'role': role.name})
+        _audit_user(user.username, 'UPDATE', user.email, f"{user.firstname} {user.lastname}",
+                    affected_data=descripcion)
         db.session.commit()
         return api_success(data=user.to_dict(), mensaje="Rol asignado correctamente.", http_status=201)
     except SQLAlchemyError:
@@ -355,7 +406,11 @@ def user_remove_role(user_id, role_name):
             )
 
     try:
+        old_role = user.role.name if user.role else None
         user.set_role(None)
+        descripcion = _describe_changes({'role': old_role}, {'role': None})
+        _audit_user(user.username, 'UPDATE', user.email, f"{user.firstname} {user.lastname}",
+                    affected_data=descripcion)
         db.session.commit()
         return api_success(data=user.to_dict(), mensaje="Rol eliminado correctamente.")
     except SQLAlchemyError:

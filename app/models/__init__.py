@@ -147,11 +147,13 @@ class UserAudit(db.Model):
     id            = db.Column(db.Integer, primary_key=True)
     user_username = db.Column(db.String(100), nullable=False)
     operation     = db.Column(db.String(10),  nullable=False)
-    user_email    = db.Column(db.String(100), nullable=True)
-    user_fullname = db.Column(db.String(200), nullable=True)
-    operation_at  = db.Column(db.DateTime,    nullable=False)
-    ip_address    = db.Column(db.String(45),  nullable=True)
-    affected_data = db.Column(db.JSON,        nullable=True)
+    user_email     = db.Column(db.String(100), nullable=True)
+    user_fullname  = db.Column(db.String(200), nullable=True)
+    actor_email    = db.Column(db.String(100), nullable=True)
+    actor_fullname = db.Column(db.String(200), nullable=True)
+    operation_at   = db.Column(db.DateTime,    nullable=False)
+    ip_address     = db.Column(db.String(45),  nullable=True)
+    affected_data  = db.Column(db.JSON,        nullable=True)
 
     def to_dict(self):
         return {
@@ -160,6 +162,8 @@ class UserAudit(db.Model):
             'operation': self.operation,
             'user_email': self.user_email,
             'user_fullname': self.user_fullname,
+            'actor_email': self.actor_email,
+            'actor_fullname': self.actor_fullname,
             'operation_at': self.operation_at.isoformat() if self.operation_at else None,
             'ip_address': self.ip_address,
             'affected_data': self.affected_data,
