@@ -91,6 +91,7 @@ class StudentRepository:
         return (
             Student.query
             .options(
+                joinedload(Student.major),
                 joinedload(Student.grades).joinedload(Grade.subject),
                 joinedload(Student.grades).joinedload(Grade.academic_period),
             )
@@ -118,6 +119,7 @@ class StudentRepository:
         return (
             Student.query
             .options(
+                joinedload(Student.major),
                 joinedload(Student.grades).joinedload(Grade.subject),
                 joinedload(Student.grades).joinedload(Grade.academic_period),
             )
@@ -265,10 +267,18 @@ class AcademicPeriodRepository:
 
         grades_deleted = Grade.query.filter_by(academic_period_id=period.id).delete()
 
-        orphan_ids = [
-            sid for sid in affected_student_ids
-            if not Grade.query.filter_by(student_id=sid).first()
-        ]
+        # Huérfanos en una sola consulta (NOT EXISTS), no un SELECT por estudiante.
+        orphan_ids = []
+        if affected_student_ids:
+            orphan_ids = [
+                row[0]
+                for row in (
+                    db.session.query(Student.id)
+                    .filter(Student.id.in_(affected_student_ids))
+                    .filter(~Grade.query.filter(Grade.student_id == Student.id).exists())
+                    .all()
+                )
+            ]
         if orphan_ids:
             Student.query.filter(Student.id.in_(orphan_ids)).delete(synchronize_session=False)
 
@@ -310,8 +320,10 @@ class AcademicPeriodAuditRepository:
         return audit
 
     @staticmethod
-    def get_all() -> list:
-        return AcademicPeriodAudit.query.order_by(AcademicPeriodAudit.operation_at.desc()).all()
+    def get_paginated(init: int, limit: int) -> tuple[list, int]:
+        query = AcademicPeriodAudit.query.order_by(AcademicPeriodAudit.operation_at.desc())
+        total = query.count()
+        return query.offset(init).limit(limit).all(), total
 
 
 class GradeRepository:

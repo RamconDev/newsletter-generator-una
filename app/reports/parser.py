@@ -1,7 +1,10 @@
+import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 # Formatos estándar (LISEVAL3, Resultados): | ASIGNATURA: (000) NOMBRE |
 _SUBJECT_PATTERN_STD  = re.compile(r'\|\s*ASIGNATURA:\s*\((\d{3})\)\s*([^\|]+)')
@@ -82,13 +85,17 @@ def _parse_header(lines: list[str]) -> tuple[str, str, Optional[str], str]:
     return universidad, centro_local, oficina, fmt
 
 
-def parse_report(file_path: Path, encoding: str = 'latin-1') -> list[ParsedGrade]:
+def parse_report(file_path: Path, encoding: str = 'latin-1') -> tuple[list[ParsedGrade], int]:
+    """Returns (parsed_grades, discarded_lines). discarded_lines cuenta líneas
+    con cédula que no pudieron parsearse (malformadas o incoherentes)."""
     with open(file_path, 'r', encoding=encoding) as f:
         all_lines = f.readlines()
 
     universidad, centro_local, oficina, fmt = _parse_header(all_lines[:15])
+    logger.info("Parseando reporte '%s': layout detectado %s (%d líneas)", file_path.name, fmt, len(all_lines))
 
     results = []
+    discarded = 0
     current_subject_code = None
     current_subject_name = None
     current_period_code  = None
@@ -125,7 +132,10 @@ def parse_report(file_path: Path, encoding: str = 'latin-1') -> list[ParsedGrade
             continue
 
         cedula_match = _CEDULA_PATTERN.search(line)
-        if not cedula_match or not current_subject_code:
+        if not cedula_match:
+            continue
+        if not current_subject_code:
+            discarded += 1
             continue
 
         cedula = cedula_match.group(1)
@@ -133,11 +143,13 @@ def parse_report(file_path: Path, encoding: str = 'latin-1') -> list[ParsedGrade
         partes = linea_limpia.split(cedula)
 
         if len(partes) <= 1:
+            discarded += 1
             continue
 
         resto  = partes[1].strip()
         tokens = resto.split()
         if not tokens:
+            discarded += 1
             continue
 
         carrera_codigo = tokens[0]
@@ -145,6 +157,7 @@ def parse_report(file_path: Path, encoding: str = 'latin-1') -> list[ParsedGrade
         if fmt == _FMT_ACTA:
             cond_idx = _find_cond_idx(tokens)
             if cond_idx is None:
+                discarded += 1
                 continue
             condicion = tokens[cond_idx]
             nombre    = " ".join(tokens[1:cond_idx])
@@ -160,11 +173,13 @@ def parse_report(file_path: Path, encoding: str = 'latin-1') -> list[ParsedGrade
             else:
                 # [total, logrados, numeros, letras...]
                 if len(after_cond) < 3:
+                    discarded += 1
                     continue
                 try:
                     objectives_total    = int(after_cond[0])
                     objectives_achieved = int(after_cond[1])
                 except ValueError:
+                    discarded += 1
                     continue
                 calificacion   = after_cond[2]
                 max_objectives = objectives_total
@@ -174,6 +189,7 @@ def parse_report(file_path: Path, encoding: str = 'latin-1') -> list[ParsedGrade
             no_idx = tokens.index("No")
             pre_no = tokens[1:no_idx]
             if not pre_no:
+                discarded += 1
                 continue
             condicion           = pre_no[-1] if pre_no[-1] in _KNOWN_COND else "RG"
             nombre_tokens       = pre_no[:-1] if pre_no[-1] in _KNOWN_COND else pre_no
@@ -187,6 +203,7 @@ def parse_report(file_path: Path, encoding: str = 'latin-1') -> list[ParsedGrade
             extra   = 1 if fmt == _FMT_CON_CAL else 0
             min_len = max_objectives + 3 + extra
             if max_objectives <= 0 or len(tokens) < min_len:
+                discarded += 1
                 continue
 
             if fmt == _FMT_CON_CAL:
@@ -199,6 +216,13 @@ def parse_report(file_path: Path, encoding: str = 'latin-1') -> list[ParsedGrade
                 obj_tokens    = tokens[-(max_objectives + 1):-1]
                 condicion     = tokens[-(max_objectives + 2)]
                 nombre_tokens = tokens[1:-(max_objectives + 2)]
+
+            # Coherencia: los tokens de objetivos deben ser 0/1. Si no lo son,
+            # el conteo de max_objectives no cuadra con esta fila y el troceado
+            # posicional insertaría datos desplazados.
+            if any(t not in ('0', '1') for t in obj_tokens):
+                discarded += 1
+                continue
 
             if condicion not in _KNOWN_COND:
                 condicion = "RG"
@@ -223,4 +247,9 @@ def parse_report(file_path: Path, encoding: str = 'latin-1') -> list[ParsedGrade
             oficina=oficina,
         ))
 
-    return results
+    if discarded:
+        logger.warning(
+            "Reporte '%s': %d líneas con cédula descartadas por formato inesperado",
+            file_path.name, discarded,
+        )
+    return results, discarded

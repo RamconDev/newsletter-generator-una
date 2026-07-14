@@ -1,6 +1,7 @@
 import logging
 import os
 from pathlib import Path
+from uuid import uuid4
 
 from flask import request, current_app
 from werkzeug.utils import secure_filename
@@ -28,6 +29,25 @@ logger = logging.getLogger(__name__)
 
 def allowed_file(filename: str) -> bool:
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in current_app.config['ALLOWED_EXTENSIONS']
+
+
+def _parse_pagination():
+    """Lee init/limit de la query string. Returns (init, limit, error_response)."""
+    try:
+        init = int(request.args.get('init', '0'))
+        if init < 0:
+            raise ValueError
+    except ValueError:
+        return None, None, api_error("PARAM_INVALIDO", "'init' debe ser un entero >= 0.", campo="init")
+
+    try:
+        limit = int(request.args.get('limit', '20'))
+        if not (1 <= limit <= 100):
+            raise ValueError
+    except ValueError:
+        return None, None, api_error("PARAM_INVALIDO", "'limit' debe ser un entero entre 1 y 100.", campo="limit")
+
+    return init, limit, None
 
 
 ###
@@ -66,9 +86,13 @@ def report_add():
 
     filename = secure_filename(file.filename)
     upload_dir = Path(current_app.config['UPLOAD_FOLDER']).resolve()
-    save_path = (upload_dir / filename).resolve()
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    # Prefijo único: evita colisiones/sobrescritura entre cargas concurrentes
+    # del mismo nombre de archivo.
+    stored_name = f"{uuid4().hex}_{filename}"
+    save_path = (upload_dir / stored_name).resolve()
 
-    if not str(save_path).startswith(str(upload_dir)):
+    if save_path.parent != upload_dir:
         return api_error("ARCHIVO_INVALIDO", "Nombre de archivo inválido.", campo="file")
 
     try:
@@ -77,20 +101,22 @@ def report_add():
         logger.exception("Error saving uploaded file: %s", filename)
         return api_error("ERROR_GUARDADO", "No se pudo guardar el archivo en disco.", http_status=500)
 
-    ok, error_code, missing_codes = process_and_save_report(
-        filename,
+    ok, error_code, missing_codes, discarded_lines = process_and_save_report(
+        save_path,
         uploaded_by_id=current_user_id(),
         uploaded_by_email=current_user_email(),
         uploaded_by_fullname=current_user_fullname(),
         source_file=filename,
     )
 
-    if not ok:
-        try:
-            os.remove(save_path)
-        except OSError:
-            logger.warning("Could not remove orphaned file after failed processing: %s", save_path)
+    # El archivo ya no se necesita tras procesarlo (éxito o fallo): sus datos
+    # quedan en BD y retenerlo acumula PII en disco.
+    try:
+        os.remove(save_path)
+    except OSError:
+        logger.warning("Could not remove uploaded file after processing: %s", save_path)
 
+    if not ok:
         if error_code == "REPORTE_VACIO":
             return api_error(
                 "REPORTE_VACIO",
@@ -108,7 +134,11 @@ def report_add():
         return api_error("ERROR_PROCESAMIENTO", "Error al procesar el reporte en la base de datos.", http_status=500)
 
     return api_success(
-        data={"filename": filename, "carreras_sin_nombre": missing_codes},
+        data={
+            "filename": filename,
+            "carreras_sin_nombre": missing_codes,
+            "lineas_descartadas": discarded_lines,
+        },
         mensaje="Archivo cargado, validado y guardado correctamente.",
         http_status=201,
     )
@@ -122,8 +152,14 @@ def report_add():
 @report.route("/reports", methods=['GET'])
 @require_role('Admin', 'Editor')
 def reports_get():
-    records = get_all_audit_records()
-    return api_success(data={"audit_records": records}, mensaje="Historial de auditoría.")
+    init, limit, err = _parse_pagination()
+    if err:
+        return err
+    records, total = get_all_audit_records(init, limit)
+    return api_success(
+        data={"audit_records": records, "total": total, "init": init, "limit": limit},
+        mensaje="Historial de auditoría.",
+    )
 
 
 ###
@@ -151,26 +187,14 @@ def academic_periods_get():
 @report.route("/academic-periods/<string:period_code>/students", methods=['GET'])
 @require_role('Admin', 'Editor', 'Viewer')
 def students_by_period(period_code):
-    raw_init  = request.args.get('init',  '0')
-    raw_limit = request.args.get('limit', '20')
     raw_order = request.args.get('order', 'nombre')
     raw_asc   = request.args.get('asc',   'true')
     carrera   = request.args.get('carrera') or None
     nombre    = request.args.get('nombre')  or None
 
-    try:
-        init = int(raw_init)
-        if init < 0:
-            raise ValueError
-    except ValueError:
-        return api_error("PARAM_INVALIDO", "'init' debe ser un entero >= 0.", campo="init")
-
-    try:
-        limit = int(raw_limit)
-        if not (1 <= limit <= 100):
-            raise ValueError
-    except ValueError:
-        return api_error("PARAM_INVALIDO", "'limit' debe ser un entero entre 1 y 100.", campo="limit")
+    init, limit, err = _parse_pagination()
+    if err:
+        return err
 
     valid_orders = {'cedula', 'nombre', 'carrera'}
     if raw_order not in valid_orders:
@@ -343,7 +367,12 @@ def career_delete(major_id):
 @report.route("/reports/audit/users", methods=['GET'])
 @require_role('Admin')
 def user_audit_list():
-    records = UserAudit.query.order_by(UserAudit.operation_at.desc()).all()
+    init, limit, err = _parse_pagination()
+    if err:
+        return err
+    query = UserAudit.query.order_by(UserAudit.operation_at.desc())
+    total = query.count()
+    records = query.offset(init).limit(limit).all()
     data = [{
         "ip_address": r.ip_address,
         "operation": r.operation,
@@ -352,4 +381,7 @@ def user_audit_list():
         "user_modify": r.user_email,
         "descripcion": r.affected_data or [],
     } for r in records]
-    return api_success(data={"audit_records": data}, mensaje="Historial de auditoría de usuarios.")
+    return api_success(
+        data={"audit_records": data, "total": total, "init": init, "limit": limit},
+        mensaje="Historial de auditoría de usuarios.",
+    )

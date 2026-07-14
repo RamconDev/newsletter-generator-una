@@ -79,7 +79,7 @@ CREATE TABLE academic_periods (
 CREATE TABLE academic_periods_audit (
     id            SERIAL PRIMARY KEY,
     period_code   VARCHAR(20)  NOT NULL,
-    operation     VARCHAR(10)  NOT NULL,
+    operation     VARCHAR(20)  NOT NULL,  -- CREACIÓN | ACTUALIZACIÓN | ELIMINACIÓN
     sede_id       INTEGER,
     user_email    VARCHAR(100),
     user_fullname VARCHAR(200),
@@ -90,14 +90,16 @@ CREATE TABLE academic_periods_audit (
 );
 
 CREATE TABLE users_audit (
-    id            SERIAL PRIMARY KEY,
-    user_username VARCHAR(100) NOT NULL,
-    operation     VARCHAR(10)  NOT NULL,
-    user_email    VARCHAR(100),
-    user_fullname VARCHAR(200),
-    operation_at  TIMESTAMP    NOT NULL,
-    ip_address    VARCHAR(45),
-    affected_data JSON
+    id             SERIAL PRIMARY KEY,
+    user_username  VARCHAR(100) NOT NULL,
+    operation      VARCHAR(20)  NOT NULL,  -- CREACIÓN | ACTUALIZACIÓN | ELIMINACIÓN
+    user_email     VARCHAR(100),
+    user_fullname  VARCHAR(200),
+    actor_email    VARCHAR(100),
+    actor_fullname VARCHAR(200),
+    operation_at   TIMESTAMP    NOT NULL,
+    ip_address     VARCHAR(45),
+    affected_data  JSON
 );
 
 CREATE TABLE grades (
@@ -149,6 +151,9 @@ INSERT INTO roles (name, description) VALUES
     ('Editor', 'Puede cargar y gestionar reportes académicos.'),
     ('Viewer', 'Solo lectura: consulta de estudiantes y períodos.');
 
+-- Usuario admin inicial: NO versionar un hash real. Generar el propio con:
+--   python -c "from werkzeug.security import generate_password_hash; print(generate_password_hash('SU_CONTRASENA'))"
+-- y reemplazar <PASSWORD_HASH_GENERADO> antes de ejecutar este script.
 INSERT INTO users (firstname, lastname, username, email, password_hash, role_id) VALUES
-    ('Admin', 'Sistema', 'admin', 'admin@sistema.com', 'scrypt:32768:8:1$juY7Z3Nyw32jQgZ5$2a993513ebf1131d1b1c61356c72513f931f7d4bd3f763f4b1bee1e18390a7b7ea452c8f151165abdea52638af166e4de5fdcc05d4bd07fbb380bda0e8ea61ae',
+    ('Admin', 'Sistema', 'admin', 'admin@sistema.com', '<PASSWORD_HASH_GENERADO>',
      (SELECT id FROM roles WHERE name = 'Admin'));
