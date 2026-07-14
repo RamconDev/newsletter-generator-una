@@ -79,6 +79,13 @@ def create_app():
             "Valores válidos: development, production, testing."
         )
 
+    from werkzeug.middleware.proxy_fix import ProxyFix
+    proxy_hops = int(os.getenv('PROXY_FORWARDED_HOPS', '1'))
+    if proxy_hops > 0:
+        app.wsgi_app = ProxyFix(
+            app.wsgi_app, x_for=proxy_hops, x_proto=proxy_hops, x_host=proxy_hops
+        )
+
     cors_origins = os.getenv('CORS_ORIGINS')
     if cors_origins:
         cors.init_app(app, origins=[o.strip() for o in cors_origins.split(',') if o.strip()])

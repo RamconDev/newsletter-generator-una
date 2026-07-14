@@ -425,8 +425,10 @@ def delete_academic_period(
     AcademicPeriodAuditRepository.create(
         period_code=period_code,
         operation='ELIMINACIÓN',
+        sede_id=result['sede_id'],
         user_email=deleted_by_email,
         user_fullname=deleted_by_fullname,
+        source_file=result['source_file'],
         ip_address=request.remote_addr,
         affected_rows={
             'grades_deleted': result['grades_deleted'],

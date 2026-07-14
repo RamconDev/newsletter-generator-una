@@ -282,11 +282,16 @@ class AcademicPeriodRepository:
         if orphan_ids:
             Student.query.filter(Student.id.in_(orphan_ids)).delete(synchronize_session=False)
 
+        source_file = period.source_file
+        sede_id = period.sede_id
+
         db.session.delete(period)
 
         return {
             "grades_deleted": grades_deleted,
             "students_deleted": len(orphan_ids),
+            "source_file": source_file,
+            "sede_id": sede_id,
         }
 
 

@@ -50,6 +50,38 @@ def _parse_pagination():
     return init, limit, None
 
 
+def _parse_page_size():
+    """Lee page/size de la query string. Returns (page, size, error_response)."""
+    try:
+        page = int(request.args.get('page', '1'))
+        if page < 1:
+            raise ValueError
+    except ValueError:
+        return None, None, api_error("PARAM_INVALIDO", "'page' debe ser un entero >= 1.", campo="page")
+
+    try:
+        size = int(request.args.get('size', '30'))
+        if not (1 <= size <= 100):
+            raise ValueError
+    except ValueError:
+        return None, None, api_error("PARAM_INVALIDO", "'size' debe ser un entero entre 1 y 100.", campo="size")
+
+    return page, size, None
+
+
+def _pagination_meta(page: int, size: int, total: int, count: int) -> dict:
+    """Metadatos de paginación. 'per_page' es la cantidad de registros de esta página."""
+    pages = (total + size - 1) // size if total else 0
+    return {
+        "page": page,
+        "pages": pages,
+        "per_page": count,
+        "total": total,
+        "has_prev": page > 1,
+        "has_next": page < pages,
+    }
+
+
 ###
 #
 # ✅ ADD NEW REPORT
@@ -152,12 +184,13 @@ def report_add():
 @report.route("/reports", methods=['GET'])
 @require_role('Admin', 'Editor')
 def reports_get():
-    init, limit, err = _parse_pagination()
+    page, size, err = _parse_page_size()
     if err:
         return err
-    records, total = get_all_audit_records(init, limit)
+    init = (page - 1) * size
+    records, total = get_all_audit_records(init, size)
     return api_success(
-        data={"audit_records": records, "total": total, "init": init, "limit": limit},
+        data={"audit_records": records, **_pagination_meta(page, size, total, len(records))},
         mensaje="Historial de auditoría.",
     )
 
@@ -367,12 +400,13 @@ def career_delete(major_id):
 @report.route("/reports/audit/users", methods=['GET'])
 @require_role('Admin')
 def user_audit_list():
-    init, limit, err = _parse_pagination()
+    page, size, err = _parse_page_size()
     if err:
         return err
+    init = (page - 1) * size
     query = UserAudit.query.order_by(UserAudit.operation_at.desc())
     total = query.count()
-    records = query.offset(init).limit(limit).all()
+    records = query.offset(init).limit(size).all()
     data = [{
         "ip_address": r.ip_address,
         "operation": r.operation,
@@ -382,6 +416,6 @@ def user_audit_list():
         "descripcion": r.affected_data or [],
     } for r in records]
     return api_success(
-        data={"audit_records": data, "total": total, "init": init, "limit": limit},
+        data={"audit_records": data, **_pagination_meta(page, size, total, len(data))},
         mensaje="Historial de auditoría de usuarios.",
     )
