@@ -1,5 +1,7 @@
 from datetime import datetime, timezone
 
+from sqlalchemy.exc import IntegrityError
+
 from app.extensions import db
 
 
@@ -24,4 +26,8 @@ class RevokedToken(db.Model):
     def revoke(cls, jti: str) -> None:
         token = cls(jti=jti)
         db.session.add(token)
-        db.session.commit()
+        try:
+            db.session.commit()
+        except IntegrityError:
+            # jti ya revocado por un request concurrente: mismo resultado final
+            db.session.rollback()

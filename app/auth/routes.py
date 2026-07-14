@@ -4,9 +4,10 @@ from datetime import datetime, timezone
 
 from flask import request, current_app, g
 from sqlalchemy.exc import SQLAlchemyError
+from werkzeug.security import check_password_hash, generate_password_hash
 
 from app.errors import api_error, api_success
-from app.extensions import db
+from app.extensions import db, limiter
 from app.auth import auth_bp as auth
 from app.auth.jwt_utils import (
     require_auth,
@@ -25,6 +26,10 @@ from .models.role import Role
 logger = logging.getLogger(__name__)
 
 _EMAIL_RE = re.compile(r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$')
+
+# Hash de sacrificio para igualar el tiempo de respuesta cuando el username
+# no existe (evita enumeración de usuarios por timing).
+_DUMMY_PASSWORD_HASH = generate_password_hash("timing-equalizer-not-a-password")
 
 
 def _audit_user(username, operation, email=None, fullname=None, affected_data=None):
@@ -77,13 +82,20 @@ def _validate_password(password: str) -> tuple[bool, str]:
 #
 ###
 @auth.route("/auth/login", methods=['POST'])
+@limiter.limit("5 per minute")
 def user_login():
     data = request.get_json()
     if not data or not data.get('username') or not data.get('password'):
         return api_error("CAMPO_REQUERIDO", "username y password son requeridos.")
 
     user = User.query.filter_by(username=data['username']).first()
-    if not user or not user.check_password(data['password']):
+    if not user:
+        check_password_hash(_DUMMY_PASSWORD_HASH, data['password'])
+        logger.warning("Login fallido para username '%s': credenciales inválidas", data['username'])
+        return api_error("CREDENCIALES_INVALIDAS", "Credenciales inválidas.", http_status=401)
+
+    if not user.check_password(data['password']) or not user.is_active:
+        logger.warning("Login fallido para username '%s': credenciales inválidas", data['username'])
         return api_error("CREDENCIALES_INVALIDAS", "Credenciales inválidas.", http_status=401)
 
     user_payload = {
@@ -96,6 +108,7 @@ def user_login():
     token = _build_token(user_payload, 'access', current_app.config['JWT_EXP_HOURS'])
     refresh_token = _build_token(user_payload, 'refresh', current_app.config['JWT_REFRESH_EXP_HOURS'])
 
+    logger.info("Login exitoso: %s (rol=%s)", user.email, user_payload['role'])
     return api_success(data={"token": token, "refresh_token": refresh_token}, mensaje="Login exitoso.")
 
 
@@ -105,7 +118,10 @@ def user_login():
 #
 ###
 @auth.route("/auth/refresh-token", methods=['POST'])
+@limiter.limit("10 per minute")
 def token_refresh():
+    from app.auth.models.revoked_token import RevokedToken
+
     data = request.get_json()
     if not data or not data.get('refresh_token'):
         return api_error("CAMPO_REQUERIDO", "El campo 'refresh_token' es requerido.", campo="refresh_token")
@@ -114,10 +130,28 @@ def token_refresh():
     if err:
         return err
 
-    user_payload = {k: payload[k] for k in ('sub', 'email', 'firstname', 'lastname', 'role') if k in payload}
+    # Revalidar contra la BD: el usuario pudo ser eliminado, desactivado o
+    # cambiar de rol después de emitido el refresh token.
+    user = db.session.get(User, payload.get('sub'))
+    if not user or not user.is_active:
+        logger.warning("Refresh rechazado: usuario %s inexistente o inactivo", payload.get('sub'))
+        return api_error("TOKEN_INVALIDO", "Token inválido o malformado.", http_status=401)
+
+    # Rotación: el refresh token usado queda revocado y no puede reutilizarse.
+    if payload.get('jti'):
+        RevokedToken.revoke(payload['jti'])
+
+    user_payload = {
+        'sub': user.id,
+        'email': user.email,
+        'firstname': user.firstname,
+        'lastname': user.lastname,
+        'role': user.role.name if user.role else None,
+    }
     token = _build_token(user_payload, 'access', current_app.config['JWT_EXP_HOURS'])
     refresh_token = _build_token(user_payload, 'refresh', current_app.config['JWT_REFRESH_EXP_HOURS'])
 
+    logger.info("Token renovado para %s", user.email)
     return api_success(data={"token": token, "refresh_token": refresh_token}, mensaje="Token renovado exitosamente.")
 
 
@@ -130,9 +164,21 @@ def token_refresh():
 @require_auth
 def user_logout():
     from app.auth.models.revoked_token import RevokedToken
+
     jti = g.current_user.get('jti')
-    if jti:
-        RevokedToken.revoke(jti)
+    if not jti:
+        logger.warning("Logout con access token sin 'jti' de %s", current_user_email())
+        return api_error("TOKEN_INVALIDO", "Token inválido o malformado.", http_status=401)
+    RevokedToken.revoke(jti)
+
+    # Revocar también el refresh token si el cliente lo envía en el body.
+    data = request.get_json(silent=True) or {}
+    if data.get('refresh_token'):
+        payload, err = _decode_token(data['refresh_token'], expected_type='refresh')
+        if not err and payload.get('jti'):
+            RevokedToken.revoke(payload['jti'])
+
+    logger.info("Logout de %s", current_user_email())
     return api_success(mensaje="Sesión cerrada correctamente.")
 
 
@@ -178,10 +224,11 @@ def user_create():
 
         db.session.add(new_user)
         fullname = f"{new_user.firstname} {new_user.lastname}"
-        _audit_user(new_user.username, 'INSERT', new_user.email, fullname,
+        _audit_user(new_user.username, 'CREACIÓN', new_user.email, fullname,
                     affected_data=[f"Creación de usuario {fullname} ({new_user.email})"])
         db.session.commit()
 
+        logger.info("Usuario creado: %s (rol=%s) por %s", new_user.email, role.name, current_user_email())
         return api_success(data=new_user.to_dict(), mensaje="Usuario registrado correctamente.", http_status=201)
 
     except SQLAlchemyError:
@@ -246,6 +293,12 @@ def user_update(user_id):
         return api_error("CUERPO_REQUERIDO", "El cuerpo de la solicitud es requerido.")
 
     if 'email' in data and data['email']:
+        if not current_user_has_role('Admin') and data['email'] != user.email:
+            return api_error(
+                "ACCESO_DENEGADO",
+                "Solo un administrador puede modificar el email.",
+                http_status=403, campo="email",
+            )
         if not _validate_email(data['email']):
             return api_error("EMAIL_INVALIDO", "El formato del email no es válido.", campo="email")
 
@@ -281,9 +334,13 @@ def user_update(user_id):
     user.modificated_at = datetime.now(timezone.utc)
 
     try:
-        _audit_user(user.username, 'UPDATE', user.email, f"{user.firstname} {user.lastname}",
+        _audit_user(user.username, 'ACTUALIZACIÓN', user.email, f"{user.firstname} {user.lastname}",
                     affected_data=descripcion)
         db.session.commit()
+        logger.info(
+            "Usuario %s actualizado por %s: %s",
+            user.email, current_user_email(), '; '.join(descripcion) or 'sin cambios',
+        )
         return api_success(data=user.to_dict(), mensaje="Usuario actualizado correctamente.")
     except SQLAlchemyError:
         db.session.rollback()
@@ -308,9 +365,10 @@ def user_delete(user_id):
         email = user.email
         fullname = f"{user.firstname} {user.lastname}"
         db.session.delete(user)
-        _audit_user(username, 'DELETE', email, fullname,
+        _audit_user(username, 'ELIMINACIÓN', email, fullname,
                     affected_data=[f"Eliminación de usuario {fullname} ({email})"])
         db.session.commit()
+        logger.info("Usuario eliminado: %s por %s", email, current_user_email())
         return api_success(data={"id": user_id, "username": username}, mensaje="Usuario eliminado correctamente.")
     except SQLAlchemyError:
         db.session.rollback()
@@ -367,9 +425,13 @@ def user_assign_role(user_id):
         old_role = user.role.name if user.role else None
         user.set_role(role)
         descripcion = _describe_changes({'role': old_role}, {'role': role.name})
-        _audit_user(user.username, 'UPDATE', user.email, f"{user.firstname} {user.lastname}",
+        _audit_user(user.username, 'ACTUALIZACIÓN', user.email, f"{user.firstname} {user.lastname}",
                     affected_data=descripcion)
         db.session.commit()
+        logger.info(
+            "Rol de %s cambiado de '%s' a '%s' por %s",
+            user.email, old_role, role.name, current_user_email(),
+        )
         return api_success(data=user.to_dict(), mensaje="Rol asignado correctamente.", http_status=201)
     except SQLAlchemyError:
         db.session.rollback()
@@ -409,9 +471,10 @@ def user_remove_role(user_id, role_name):
         old_role = user.role.name if user.role else None
         user.set_role(None)
         descripcion = _describe_changes({'role': old_role}, {'role': None})
-        _audit_user(user.username, 'UPDATE', user.email, f"{user.firstname} {user.lastname}",
+        _audit_user(user.username, 'ACTUALIZACIÓN', user.email, f"{user.firstname} {user.lastname}",
                     affected_data=descripcion)
         db.session.commit()
+        logger.info("Rol '%s' removido de %s por %s", old_role, user.email, current_user_email())
         return api_success(data=user.to_dict(), mensaje="Rol eliminado correctamente.")
     except SQLAlchemyError:
         db.session.rollback()

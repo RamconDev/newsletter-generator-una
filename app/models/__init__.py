@@ -146,7 +146,7 @@ class UserAudit(db.Model):
 
     id            = db.Column(db.Integer, primary_key=True)
     user_username = db.Column(db.String(100), nullable=False)
-    operation     = db.Column(db.String(10),  nullable=False)
+    operation     = db.Column(db.String(20),  nullable=False)
     user_email     = db.Column(db.String(100), nullable=True)
     user_fullname  = db.Column(db.String(200), nullable=True)
     actor_email    = db.Column(db.String(100), nullable=True)
@@ -179,7 +179,7 @@ class AcademicPeriodAudit(db.Model):
 
     id            = db.Column(db.Integer, primary_key=True)
     period_code   = db.Column(db.String(20), nullable=False)
-    operation     = db.Column(db.String(10), nullable=False)
+    operation     = db.Column(db.String(20), nullable=False)
     sede_id       = db.Column(db.Integer, nullable=True)
     user_email    = db.Column(db.String(100), nullable=True)
     user_fullname = db.Column(db.String(200), nullable=True)
