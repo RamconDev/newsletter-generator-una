@@ -76,6 +76,38 @@ def _validate_password(password: str) -> tuple[bool, str]:
     return True, ""
 
 
+def _parse_page_size():
+    """Lee page/size de la query string. Returns (page, size, error_response)."""
+    try:
+        page = int(request.args.get('page', '1'))
+        if page < 1:
+            raise ValueError
+    except ValueError:
+        return None, None, api_error("PARAM_INVALIDO", "'page' debe ser un entero >= 1.", campo="page")
+
+    try:
+        size = int(request.args.get('size', '30'))
+        if size < 1:
+            raise ValueError
+    except ValueError:
+        return None, None, api_error("PARAM_INVALIDO", "'size' debe ser un entero >= 1.", campo="size")
+
+    return page, size, None
+
+
+def _pagination_meta(page: int, size: int, total: int, count: int) -> dict:
+    """Metadatos de paginación. 'per_page' es la cantidad de registros de esta página."""
+    pages = (total + size - 1) // size if total else 0
+    return {
+        "page": page,
+        "pages": pages,
+        "per_page": count,
+        "total": total,
+        "has_prev": page > 1,
+        "has_next": page < pages,
+    }
+
+
 ###
 #
 # ✅ LOGIN — público
@@ -245,14 +277,23 @@ def user_create():
 @auth.route("/auth/user", methods=['GET'])
 @require_role('Admin')
 def user_get():
-    users = db.session.execute(
-        db.select(User).order_by(User.id.desc())
-    ).scalars().all()
+    page, size, err = _parse_page_size()
+    if err:
+        return err
 
-    if not users:
+    total = User.query.count()
+    if not total:
         return api_error("USUARIOS_NO_ENCONTRADOS", "No se encontraron usuarios registrados.", http_status=404)
 
-    return api_success(data=[u.to_dict() for u in users], mensaje="Usuarios obtenidos correctamente.")
+    init = (page - 1) * size
+    users = db.session.execute(
+        db.select(User).order_by(User.id.desc()).offset(init).limit(size)
+    ).scalars().all()
+
+    return api_success(
+        data={"users": [u.to_dict() for u in users], **_pagination_meta(page, size, total, len(users))},
+        mensaje="Usuarios obtenidos correctamente.",
+    )
 
 
 ###

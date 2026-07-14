@@ -61,10 +61,10 @@ def _parse_page_size():
 
     try:
         size = int(request.args.get('size', '30'))
-        if not (1 <= size <= 100):
+        if size < 1:
             raise ValueError
     except ValueError:
-        return None, None, api_error("PARAM_INVALIDO", "'size' debe ser un entero entre 1 y 100.", campo="size")
+        return None, None, api_error("PARAM_INVALIDO", "'size' debe ser un entero >= 1.", campo="size")
 
     return page, size, None
 
