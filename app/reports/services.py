@@ -56,28 +56,31 @@ def delete_report(filename: str) -> bool:
 
 
 def process_and_save_report(
-    file_name: str,
+    file_path: Path,
     encoding: str = 'latin-1',
     uploaded_by_id: int | None = None,
     uploaded_by_email: str | None = None,
     uploaded_by_fullname: str | None = None,
     source_file: str | None = None,
-) -> tuple[bool, str | None, list[str]]:
+) -> tuple[bool, str | None, list[str], int]:
     """
-    Returns (True, None, missing_codes) on success, (False, error_code, []) on failure.
+    file_path: ruta absoluta al archivo ya guardado (la resuelve el route).
+    Returns (True, None, missing_codes, discarded_lines) on success,
+    (False, error_code, [], 0) on failure.
     error_code values: "REPORTE_VACIO" | "ERROR_LECTURA" | "ERROR_DB"
     missing_codes: career codes present in the file whose Major has no name yet.
     """
-    file_path = get_path_data() / file_name
+    file_name = file_path.name
+    logger.info("Iniciando procesamiento del reporte '%s' (subido por %s)", file_name, uploaded_by_email)
     try:
-        parsed_grades = parse_report(file_path, encoding=encoding)
+        parsed_grades, discarded_lines = parse_report(file_path, encoding=encoding)
     except (OSError, UnicodeDecodeError) as e:
         logger.error("Error reading report file '%s': %s", file_name, e)
-        return False, "ERROR_LECTURA", []
+        return False, "ERROR_LECTURA", [], 0
 
     if not parsed_grades:
         logger.warning("Report '%s' produced 0 records — no valid data detected.", file_name)
-        return False, "REPORTE_VACIO", []
+        return False, "REPORTE_VACIO", [], 0
 
     try:
         first = parsed_grades[0]
@@ -104,10 +107,10 @@ def process_and_save_report(
                     uploaded_at=datetime.now(timezone.utc),
                     source_file=source_file,
                 )
-            # Auditoría siempre: INSERT si es nuevo, UPDATE si ya existía
+            # Auditoría siempre: CREACIÓN si es nuevo, ACTUALIZACIÓN si ya existía
             AcademicPeriodAuditRepository.create(
                 period_code=period_code,
-                operation='INSERT' if is_new_period else 'UPDATE',
+                operation='CREACIÓN' if is_new_period else 'ACTUALIZACIÓN',
                 sede_id=sede_id,
                 user_email=uploaded_by_email,
                 user_fullname=uploaded_by_fullname,
@@ -197,13 +200,20 @@ def process_and_save_report(
         GradeRepository.bulk_create(list(new_grades_by_key.values()))
 
         db.session.commit()
-        logger.info("Report '%s' processed successfully (%d records).", file_name, len(parsed_grades))
-        return True, None, sorted(missing_codes)
+        logger.info(
+            "Reporte '%s' procesado: período=%s, %d registros, %d estudiantes nuevos, "
+            "%d notas nuevas, %d asignaturas nuevas, %d carreras sin nombre",
+            file_name, period_code, len(parsed_grades), len(new_students),
+            len(new_grades_by_key), len(new_subjects), len(missing_codes),
+        )
+        return True, None, sorted(missing_codes), discarded_lines
 
-    except SQLAlchemyError as e:
+    except Exception as e:
+        # No solo SQLAlchemyError: un KeyError/ValueError a mitad de la
+        # transacción dejaría la sesión sucia para el siguiente request.
         db.session.rollback()
-        logger.error("Database error processing report '%s': %s", file_name, e)
-        return False, "ERROR_DB", []
+        logger.exception("Error processing report '%s': %s", file_name, e)
+        return False, "ERROR_DB", [], 0
 
 
 def _major_display(major) -> str:
@@ -229,8 +239,6 @@ def _format_student_data(student: Student, grades=None) -> dict:
 
         if grade.absent or not grade.objectives_total or not grade.objectives_achieved:
             nota_final = "No Presento"
-        elif grade.calificacion:
-            nota_final = grade.calificacion
         else:
             nota_final = f"{grade.objectives_achieved}/{grade.objectives_total}"
 
@@ -311,9 +319,9 @@ def get_all_academic_periods() -> list[dict]:
     return [p.to_dict() for p in periods]
 
 
-def get_all_audit_records() -> list[dict]:
-    records = AcademicPeriodAuditRepository.get_all()
-    return [{k: v for k, v in r.to_dict().items() if k != 'id'} for r in records]
+def get_all_audit_records(init: int = 0, limit: int = 20) -> tuple[list[dict], int]:
+    records, total = AcademicPeriodAuditRepository.get_paginated(init, limit)
+    return [{k: v for k, v in r.to_dict().items() if k != 'id'} for r in records], total
 
 
 ###
@@ -342,6 +350,7 @@ def create_careers(items: list[dict]) -> tuple[list[dict], list[str], str | None
     processed: list[dict] = []
     failed: list[str] = []
     try:
+        majors_map = MajorRepository.get_all_map()
         for item in items:
             if not isinstance(item, dict):
                 failed.append("(vacío)")
@@ -352,11 +361,12 @@ def create_careers(items: list[dict]) -> tuple[list[dict], list[str], str | None
                 failed.append("(vacío)")
                 continue
 
-            major = MajorRepository.find_by_code(code)
+            major = majors_map.get(code)
             if major:
                 MajorRepository.update(major, name=name)
             else:
                 major = MajorRepository.create(code, name)
+                majors_map[code] = major
             processed.append(major.to_dict())
 
         db.session.commit()
@@ -414,7 +424,7 @@ def delete_academic_period(
         return None
     AcademicPeriodAuditRepository.create(
         period_code=period_code,
-        operation='DELETE',
+        operation='ELIMINACIÓN',
         user_email=deleted_by_email,
         user_fullname=deleted_by_fullname,
         ip_address=request.remote_addr,
@@ -429,4 +439,9 @@ def delete_academic_period(
         db.session.rollback()
         logger.error("Database error deleting period '%s': %s", period_code, e)
         raise
+    logger.info(
+        "Período '%s' eliminado por %s: %d notas y %d estudiantes borrados",
+        period_code, deleted_by_email,
+        result['grades_deleted'], result['students_deleted'],
+    )
     return result
