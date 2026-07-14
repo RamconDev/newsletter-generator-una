@@ -3,15 +3,10 @@ import os
 
 from flask import Flask
 
-from .extensions import cors, db
+from .extensions import cors, db, limiter
 from .config import ProductionConfig, DevelopmentConfig, TestingConfig
-from .errors import register_error_handlers, api_success
-
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-)
+from .errors import register_error_handlers, api_success, api_error
+from .logging_setup import init_logging, register_request_logging
 
 
 def _validate_db_connection(app):
@@ -54,9 +49,9 @@ def _validate_secrets(app):
 
 
 def create_app():
-    app = Flask(__name__)
+    init_logging()
 
-    cors.init_app(app)
+    app = Flask(__name__)
 
     env = os.getenv('FLASK_ENV', 'development')
 
@@ -78,6 +73,19 @@ def create_app():
         _validate_secrets(app)
     elif env == 'testing':
         app.config.from_object(TestingConfig)
+    else:
+        raise RuntimeError(
+            f"FLASK_ENV desconocido: '{env}'. "
+            "Valores válidos: development, production, testing."
+        )
+
+    cors_origins = os.getenv('CORS_ORIGINS')
+    if cors_origins:
+        cors.init_app(app, origins=[o.strip() for o in cors_origins.split(',') if o.strip()])
+    else:
+        cors.init_app(app)
+
+    limiter.init_app(app)
 
     db.init_app(app)
     _validate_db_connection(app)
@@ -91,6 +99,7 @@ def create_app():
     from app.auth import login_manager
     login_manager.init_app(app)
 
+    register_request_logging(app)
     register_error_handlers(app)
 
     @app.route("/")
@@ -99,5 +108,23 @@ def create_app():
             data={"app": "Newsletter Generator UNA", "version": "1.0"},
             mensaje="API operativa.",
         )
+
+    @app.route(f"{app.config['API_PREFIX']}/{app.config['API_VERSION']}/status")
+    def status():
+        from sqlalchemy import text
+        from sqlalchemy.exc import SQLAlchemyError
+
+        try:
+            db.session.execute(text("SELECT 1"))
+        except SQLAlchemyError:
+            logging.getLogger(__name__).exception(
+                "Health check: fallo de conexión a la base de datos"
+            )
+            return api_error(
+                "DB_DOWN",
+                "La base de datos no está disponible",
+                http_status=503,
+            )
+        return api_success(data={"app": "up", "database": "up"}, mensaje="OK")
 
     return app

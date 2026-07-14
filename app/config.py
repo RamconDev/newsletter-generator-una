@@ -58,10 +58,12 @@ class BaseConfig:
     # SQLAlchemy
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 
-    SECRET_KEY = os.getenv("SECRET_KEY", "secret_key")
+    SECRET_KEY = os.getenv("SECRET_KEY")
 
     # JWT settings
-    JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "jwt_secret_key")
+    JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY")
+    JWT_ISSUER = os.getenv("JWT_ISSUER", "newsletter-generator-una")
+    JWT_AUDIENCE = os.getenv("JWT_AUDIENCE", "newsletter-generator-una")
     JWT_EXP_HOURS = int(os.getenv("JWT_EXP_HOURS", 1))
     JWT_REFRESH_EXP_HOURS = int(os.getenv("JWT_REFRESH_EXP_HOURS", JWT_EXP_HOURS * 2))
 
@@ -101,4 +103,6 @@ class DevelopmentConfig(BaseConfig):
 
 class TestingConfig(BaseConfig):
     TESTING = True
+    SECRET_KEY = "testing-secret-key-0000"
+    JWT_SECRET_KEY = "testing-jwt-secret-key-0000"
     SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"
