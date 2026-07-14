@@ -38,13 +38,8 @@ CREATE TABLE users (
     phone            VARCHAR(100),
     create_at        TIMESTAMP NOT NULL DEFAULT NOW(),
     modificated_at   TIMESTAMP,
-    is_active        BOOLEAN NOT NULL DEFAULT TRUE
-);
-
-CREATE TABLE roles_users (
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    role_id INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
-    PRIMARY KEY (user_id, role_id)
+    is_active        BOOLEAN NOT NULL DEFAULT TRUE,
+    role_id          INTEGER REFERENCES roles(id) ON DELETE SET NULL
 );
 
 CREATE TABLE revoked_tokens (
@@ -60,7 +55,8 @@ CREATE TABLE revoked_tokens (
 
 CREATE TABLE majors (
     id   SERIAL PRIMARY KEY,
-    code VARCHAR(10) NOT NULL UNIQUE
+    code VARCHAR(10)  NOT NULL UNIQUE,
+    name VARCHAR(150)
 );
 
 CREATE TABLE students (
@@ -89,7 +85,7 @@ CREATE TABLE academic_periods (
 CREATE TABLE academic_periods_audit (
     id            SERIAL PRIMARY KEY,
     period_code   VARCHAR(20)  NOT NULL,
-    operation     VARCHAR(10)  NOT NULL,
+    operation     VARCHAR(20)  NOT NULL,  -- CREACIÓN | ACTUALIZACIÓN | ELIMINACIÓN
     user_email    VARCHAR(100),
     user_fullname VARCHAR(200),
     operation_at  TIMESTAMP    NOT NULL,
@@ -147,6 +143,7 @@ CREATE INDEX idx_grades_academic_period_id ON grades(academic_period_id);
 -- Login / lookup de usuario por username y email
 CREATE INDEX idx_users_username ON users(username);
 CREATE INDEX idx_users_email    ON users(email);
+CREATE INDEX idx_users_role_id  ON users(role_id);
 
 -- Lookup rápido de tokens revocados por JTI
 CREATE UNIQUE INDEX ix_revoked_tokens_jti ON revoked_tokens(jti);
@@ -171,7 +168,7 @@ ALTER TABLE academic_periods ADD COLUMN uploaded_by_fullname VARCHAR(200);
 CREATE TABLE academic_periods_audit (
     id            SERIAL PRIMARY KEY,
     period_code   VARCHAR(20)  NOT NULL,
-    operation     VARCHAR(10)  NOT NULL,
+    operation     VARCHAR(20)  NOT NULL,
     user_email    VARCHAR(100),
     user_fullname VARCHAR(200),
     operation_at  TIMESTAMP    NOT NULL,
@@ -192,6 +189,39 @@ ALTER TABLE grades ADD COLUMN obj_4          BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE grades ADD COLUMN obj_5          BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE grades ADD COLUMN obj_6          BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE grades ADD COLUMN objectives_max INTEGER NOT NULL DEFAULT 0;
+
+-- Un solo rol por usuario: reemplaza la relación M:N roles_users por FK role_id
+ALTER TABLE users ADD COLUMN role_id INTEGER REFERENCES roles(id) ON DELETE SET NULL;
+CREATE INDEX idx_users_role_id ON users(role_id);
+
+-- Backfill: tomar el rol de mayor privilegio de cada usuario (Admin > Editor > Viewer)
+UPDATE users u
+SET role_id = (
+    SELECT ru.role_id
+    FROM roles_users ru
+    JOIN roles r ON r.id = ru.role_id
+    WHERE ru.user_id = u.id
+    ORDER BY CASE r.name
+        WHEN 'Admin'  THEN 1
+        WHEN 'Editor' THEN 2
+        WHEN 'Viewer' THEN 3
+        ELSE 4
+    END
+    LIMIT 1
+);
+
+DROP TABLE roles_users;
+
+-- Operación de auditoría en español (scripts: doc/schema_alter_operation_es.sql
+-- y doc/schema_alter_operation_es_rollback.sql)
+ALTER TABLE academic_periods_audit ALTER COLUMN operation TYPE VARCHAR(20);
+ALTER TABLE users_audit            ALTER COLUMN operation TYPE VARCHAR(20);
+UPDATE academic_periods_audit SET operation = CASE operation
+    WHEN 'INSERT' THEN 'CREACIÓN' WHEN 'UPDATE' THEN 'ACTUALIZACIÓN'
+    WHEN 'DELETE' THEN 'ELIMINACIÓN' ELSE operation END;
+UPDATE users_audit SET operation = CASE operation
+    WHEN 'INSERT' THEN 'CREACIÓN' WHEN 'UPDATE' THEN 'ACTUALIZACIÓN'
+    WHEN 'DELETE' THEN 'ELIMINACIÓN' ELSE operation END;
 ```
 
 ---
@@ -200,7 +230,7 @@ ALTER TABLE grades ADD COLUMN objectives_max INTEGER NOT NULL DEFAULT 0;
 
 ```
 roles ──────────────┐
-                    │ (M:N via roles_users)
+                    │ (1:N — users.role_id, SET NULL on delete)
 users ──────────────┘
   │
   │ uploaded_by_id (SET NULL on delete)
