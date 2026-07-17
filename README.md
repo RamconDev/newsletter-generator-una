@@ -1,208 +1,128 @@
-# Newsletter Generator UNA - Backend (Flask API)
+# Newsletter Generator UNA — Backend (Flask API)
 
-API RESTful desarrollada en Python y Flask diseñada para procesar reportes académicos de la Universidad Nacional Abierta (UNA). Permite la carga estructurada de archivos planos (.REP, .TXT), los almacena en base de datos de forma relacional y expone la información académica de los estudiantes agrupada por períodos.
+API REST en Python/Flask que procesa reportes académicos `.REP` de la **Universidad Nacional Abierta
+(UNA)**. Ingesta los archivos planos, los almacena de forma relacional en PostgreSQL y expone la
+información académica de los estudiantes agrupada por período, con autenticación por JWT, control de
+acceso por roles, auditoría de cambios y exportación de la ficha académica en PDF.
 
-## Características y Avances Desarrollados
+## Tabla de contenido
 
-1. **Gestión de Carga de Archivos Segura**:
-   - Validación robusta de tipo de archivo (mediante cabeceras y contenido), extensión (`.REP`, `.TXT`) y límites de tamaño definidos a través de variables de entorno (`.env` y `config.py`).
-   - Lógica de procesamiento capaz de leer el reporte plano, parsearlo y extraer datos específicos de estudiantes, cursos y calificaciones.
+- [Stack y arquitectura](#stack-y-arquitectura)
+- [Puesta en marcha (local)](#puesta-en-marcha-local)
+- [Variables de entorno](#variables-de-entorno)
+- [Superficie de la API](#superficie-de-la-api)
+- [Documentación](#documentación)
 
-2. **Soporte de Períodos Académicos**:
-   - Refactorización de la base de datos y la lógica para que las calificaciones e información de los estudiantes se vinculen y agrupen correctamente según sus períodos académicos (lapsos), facilitando el consumo por parte del frontend.
+## Stack y arquitectura
 
-3. **Módulo de Autenticación y Usuarios**:
-   - Implementación de un modelo de usuarios (`User`) y roles (`Role`) utilizando SQLAlchemy.
-   - Rutas dedicadas para la creación, consulta, modificación y eliminación de usuarios (CRUD completo).
-   - Asignación dinámica de roles (ej. `Viewer`) para control de acceso.
+- **Python 3.12 + Flask** con patrón *Application Factory* + *Blueprints* + *Service/Repository*.
+- **PostgreSQL** (driver `pg8000`); requerido incluso en desarrollo. La app valida en el arranque la
+  conexión a la BD y la fortaleza de los secretos, y falla rápido si algo falta.
+- **Autenticación JWT** (PyJWT, HS256): tokens de acceso y de refresco; `logout` revoca por `jti`.
+- **Roles**: `Admin`, `Editor`, `Viewer` (un único rol por usuario).
+- **Auditoría** transaccional de mutaciones de usuarios y de cargas/eliminaciones de períodos.
+- **Rate limiting** por IP (Flask-Limiter) en login, refresh y exportación de PDF.
+- **Exportación PDF** de la ficha académica (xhtml2pdf).
 
-4. **Arquitectura Escalable**:
-   - Patrón de diseño de "Application Factory" con Blueprints (`auth_bp` y `reports_bp`) para separar responsabilidades.
-   - Uso de `SQLAlchemy` para el ORM de la base de datos.
-
----
-
-## Documentación de Endpoints
-
-La API cuenta con dos dominios principales: la gestión de reportes/estudiantes y la gestión de usuarios/autenticación. Todas las rutas operan bajo el prefijo `/api/v1`.
-
-### 📚 Módulo de Reportes y Estudiantes
-
-#### 1. Cargar Nuevo Reporte
-- **Endpoint**: `POST /api/v1/reports`
-- **Descripción**: Permite subir un archivo de reporte al servidor. El servidor verifica que contenga la cabecera "UNIVERSIDAD NACIONAL ABIERTA", comprueba su extensión y tamaño máximo. Si es válido, lo procesa y guarda la información estructurada en la base de datos.
-- **Body**: `multipart/form-data` con el campo `file` conteniendo el archivo.
-
-#### 2. Listar Reportes Procesados
-- **Endpoint**: `GET /api/v1/reports`
-- **Descripción**: Devuelve la lista de archivos de reporte que han sido procesados y almacenados.
-
-#### 3. Listar Períodos Académicos
-- **Endpoint**: `GET /api/v1/academic-periods`
-- **Descripción**: Obtiene una lista de todos los períodos académicos únicos registrados actualmente en la base de datos provenientes de los distintos reportes.
-
-#### 4. Búsqueda de Estudiante por Cédula
-- **Endpoint**: `GET /api/v1/students/<identificacion>`
-- **Descripción**: Realiza una búsqueda exacta de un estudiante utilizando su documento de identidad (Cédula). Devuelve la información personal del estudiante junto con todas sus asignaturas, calificaciones y créditos, correctamente agrupados por sus respectivos períodos académicos.
-
----
-
-### 🔐 Módulo de Usuarios y Autenticación
-
-#### 5. Crear Usuario
-- **Endpoint**: `POST /api/v1/auth/user`
-- **Descripción**: Registra un nuevo usuario en el sistema. Automáticamente le asigna el rol base de `Viewer`.
-- **Body (JSON)**: `firstname`, `lastname`, `username`, `email`, `phone`, `password`.
-
-#### 6. Obtener Todos los Usuarios
-- **Endpoint**: `GET /api/v1/auth/user`
-- **Descripción**: Devuelve un listado con la información de todos los usuarios registrados, ordenados por los más recientes.
-
-#### 7. Obtener Usuario por ID
-- **Endpoint**: `GET /api/v1/auth/user/<user_id>`
-- **Descripción**: Retorna la información detallada de un usuario específico mediante su ID.
-
-#### 8. Actualizar Usuario
-- **Endpoint**: `PUT /api/v1/auth/user/<user_id>`
-- **Descripción**: Actualiza los datos de un usuario existente.
-
-#### 9. Eliminar Usuario
-- **Endpoint**: `DELETE /api/v1/auth/user/<user_id>`
-- **Descripción**: Elimina del sistema a un usuario específico a través de su ID.
-
-#### 10. Asignar Rol a un Usuario
-- **Endpoint**: `POST /api/v1/auth/user/<user_id>/role`
-- **Descripción**: Asigna un rol específico (previamente creado en la base de datos) a un usuario.
-- **Body (JSON)**: `{"role": "NombreDelRol"}`
-
-#### 11. Remover Rol de un Usuario
-- **Endpoint**: `DELETE /api/v1/auth/user/<user_id>/role/<role_name>`
-- **Descripción**: Elimina un rol específico del listado de roles asignados a un usuario particular.
-
----
-
-## Requisitos y Configuración Local
-
-- Python 3.10+
-- Entorno Virtual (`venv`) recomendado.
-
-### Instalación
-
-1. Crear y activar el entorno virtual:
-   ```bash
-   python -m venv .venv
-   # Windows
-   .\.venv\Scripts\Activate.ps1
-   # Linux/Mac
-   source .venv/bin/activate
-   ```
-2. Instalar dependencias:
-   ```bash
-   pip install -r requirements.txt
-   ```
-3. Ejecutar el servidor de pruebas:
-   ```bash
-   python run.py
-   ```
-El servidor se inicializará por defecto en `http://127.0.0.1:5000`.
-
-## Variables de Entorno y Despliegue
-
-La aplicación utiliza una sola variable de entorno para la conexión a la base de datos en producción: `DATABASE_URL`. Ejemplo de `DATABASE_URL`:
+Flujo de una petición: **Ruta → Servicio → Repositorio → Modelo (SQLAlchemy)**. Toda respuesta usa la
+envoltura `{ "status", "message", "data" }`. El detalle de arquitectura y convenciones está en
+[`CLAUDE.md`](CLAUDE.md); el manual para mantener y extender el proyecto en
+[`doc/MANTENIMIENTO.md`](doc/MANTENIMIENTO.md).
 
 ```
-postgresql://USER:PASSWORD@HOST:5432/DBNAME
+app/
+├── __init__.py     # create_app(): valida BD + secretos, registra extensiones y blueprints
+├── config.py       # Configs y normalización de URL para pg8000
+├── extensions.py   # db, cors, limiter
+├── blueprints.py   # registro de auth_bp, reports_bp, exports_bp
+├── errors.py       # envoltura api_success/api_error + manejadores globales
+├── logging_setup.py# logging con X-Request-ID por petición
+├── models/         # dominio académico
+├── auth/           # login/refresh/logout, CRUD de usuarios, roles (JWT)
+├── reports/        # ingesta .REP, períodos, estudiantes, carreras, auditoría
+└── exports/        # ficha académica en PDF
 ```
 
-Recomendaciones rápidas:
+## Puesta en marcha (local)
 
-- Para desarrollo local puedes copiar `.env.example` a `.env` y adaptar las credenciales.
-- En producción, exporta `DATABASE_URL` en el entorno del proceso o configúralo en tu orquestador (systemd, Docker, Heroku, etc.).
-
-Ejemplos de uso:
-
-PowerShell (Windows):
 ```powershell
-$env:DATABASE_URL = 'postgresql://user:password@db-host:5432/newsletter_db'
-python run.py
-```
-
-Linux / macOS (bash):
-```bash
-export DATABASE_URL='postgresql://user:password@db-host:5432/newsletter_db'
-python run.py
-```
-
-Ejemplo mínimo `docker-compose` (servicio app + postgres):
-```yaml
-version: '3.8'
-services:
-   db:
-      image: postgres:15
-      environment:
-         POSTGRES_USER: user
-         POSTGRES_PASSWORD: password
-         POSTGRES_DB: newsletter_db
-      volumes:
-         - db-data:/var/lib/postgresql/data
-
-   app:
-      build: .
-      environment:
-         DATABASE_URL: postgres://user:password@db:5432/newsletter_db
-      depends_on:
-         - db
-
-volumes:
-   db-data:
-```
-
-Nota: Docker Compose ejemplo usa `postgres://` para compatibilidad con algunas herramientas; la aplicación normaliza `postgres://` a `postgresql://` automáticamente.
-
-## Nueva estructura del proyecto (refactor)
-
-Recientemente se refactorizó la aplicación hacia una estructura modular más clara. Cambios principales:
-
-- `app/extensions.py`: centraliza las extensiones de Flask (`db`, `migrate`, `cors`, etc.).
-- `app/reports/services.py`: contiene la lógica de procesamiento de archivos de reporte y funciones relacionadas (`process_and_save_report`, `get_reports_list`, `get_student_data_from_db`, `get_all_academic_periods`, ...).
-- `app/utils.py`: ahora es una fachada de compatibilidad que re-exporta las funciones de reportes desde `app.reports.services` para mantener compatibilidad con importaciones existentes.
-- Blueprints: las rutas HTTP permanecen en `app/reports/routes.py` y `app/auth/routes.py`; la lógica de negocio se traslada a `services` dentro de cada módulo.
-
-Objetivos de la refactorización:
-
-- Separar responsabilidades: rutas (HTTP) → servicios (lógica) → modelos/repositorios (DB).
-- Facilitar pruebas unitarias y reutilización del código.
-- Reducir acoplamiento entre módulos y centralizar configuración/extensiones.
-
-Notas de migración y pruebas rápidas
-
-1. Para ejecutar localmente (desde la raíz del proyecto):
-
-```bash
+# 1. Entorno virtual
 python -m venv .venv
-.\.venv\Scripts\Activate.ps1   # Windows PowerShell
+.\.venv\Scripts\Activate.ps1        # Windows PowerShell
+# source .venv/bin/activate         # Linux/macOS
+
+# 2. Dependencias
 pip install -r requirements.txt
+
+# 3. Configuración: copiar la plantilla y ajustar credenciales/secretos
+copy .env.example .env              # cp .env.example .env  en Linux/macOS
+
+# 4. Base de datos: aplicar el esquema autoritativo sobre una BD PostgreSQL vacía
+#    psql "$DATABASE_URL" -f doc/schema_create.sql
+
+# 5. Servidor de desarrollo (http://127.0.0.1:5000)
 python run.py
+
+# 6. (opcional) Sembrar los roles por defecto Admin, Editor, Viewer
+flask --app run init-roles
 ```
 
-2. Verifica la ruta base (index) y listado de reportes:
+`SECRET_KEY` y `JWT_SECRET_KEY` son obligatorios (mínimo 16 caracteres) y `DATABASE_URL` debe ser una URI
+`postgresql://`; de lo contrario el arranque aborta. No hay suite de tests ni linter configurados.
 
-- `GET /` — devuelve mensaje de inicio y lista de archivos encontrados en `data/`.
-- `GET /api/v1/reports` — lista de archivos `.REP` disponibles.
+## Variables de entorno
 
-3. Probar subida de archivo (ejemplo con `curl`):
+| Variable | Default | Propósito |
+|----------|---------|-----------|
+| `FLASK_ENV` | `development` | Selecciona la clase de configuración |
+| `DATABASE_URL` | — (requerido) | URI PostgreSQL (`URL_DB`/`DB_ENGINE` como fallback heredado) |
+| `SECRET_KEY` / `JWT_SECRET_KEY` | — (requerido) | Mínimo 16 caracteres cada uno; validados al arranque |
+| `JWT_EXP_HOURS` / `JWT_REFRESH_EXP_HOURS` | `1` / `2` | Duración de los tokens |
+| `API_PREFIX` / `API_VERSION` | `/api` / `v1` | Prefijo de rutas |
+| `UPLOAD_FOLDER` | `data` | Directorio para archivos `.REP` |
+| `MAX_CONTENT_LENGTH` / `MAX_FILE_SIZE` | 16MB / 5MB | Límites de request / por archivo |
+| `ALLOWED_EXTENSIONS` | `rep` | Extensiones de carga aceptadas |
+| `PROXY_FORWARDED_HOPS` | `1` | Saltos de proxy confiables para leer la IP del cliente (`0` desactiva) |
+| `CORS_ORIGINS` | — (todos) | Orígenes permitidos (separados por coma); sin definir = abierto |
+| `LOG_LEVEL` | `INFO` | Nivel de log raíz |
+| `PORT` | `5000` | Puerto del servidor de desarrollo |
 
-```bash
-curl -F "file=@data/LISEVAL3.REP" http://127.0.0.1:5000/api/v1/reports
-```
+## Superficie de la API
 
-4. Comentarios para desarrolladores
+Prefijo por defecto `/api/v1`. El rol requerido va entre paréntesis. Contrato completo (body, respuestas,
+status y casos de error) en [`doc/API.md`](doc/API.md).
 
-- Si exportas funciones desde `app.utils`, ya funcionan porque `app.utils` re-exporta desde `app.reports.services`.
-- Para mover más lógica a servicios, crea `app/<module>/services.py` y deja las rutas ligeras.
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| GET | `/` , `/api/v1/status` | Health checks (público) |
+| POST | `/auth/login` | Devuelve JWT de acceso + refresco (público) |
+| POST | `/auth/refresh-token` | Rota los tokens (público) |
+| POST | `/auth/logout` | Revoca el token actual (autenticado) |
+| POST/GET | `/auth/user` | Crear / listar usuarios (Admin) |
+| GET/PUT | `/auth/user/<id>` | Obtener / actualizar usuario (Admin o el propio) |
+| DELETE | `/auth/user/<id>` | Eliminar usuario (Admin) |
+| GET | `/auth/roles` | Listar roles (Admin) |
+| POST / DELETE | `/auth/user/<id>/role[/<name>]` | Asignar / quitar rol (Admin) |
+| POST | `/reports` | Cargar y procesar `.REP` (Admin, Editor) |
+| GET | `/reports` | Auditoría de cargas de períodos (Admin, Editor) |
+| GET | `/reports/audit/users` | Auditoría de usuarios (Admin) |
+| GET | `/academic-periods` | Listar períodos (cualquier rol) |
+| DELETE | `/academic-periods/<code>` | Eliminar período + cascada (Admin) |
+| GET | `/academic-periods/<code>/students` | Estudiantes paginados del período |
+| GET | `/students/<identification>` | Estudiante por cédula, opcional `?period=` |
+| GET/POST | `/careers` | Listar / crear carreras en lote (POST: Admin, Editor) |
+| GET/PUT/DELETE | `/careers/<id>` | CRUD de carrera (DELETE: Admin) |
+| GET/POST | `/exports/pdf/<identification>/<period_id>` | Ficha académica en PDF (público) |
 
-Si quieres, puedo:
+## Documentación
 
-- ejecutar el servidor localmente y realizar una subida de prueba con `data/LISEVAL3.REP` para validar el flujo end-to-end, o
-- preparar una PR con estos cambios y un conjunto mínimo de pruebas unitarias para `app.reports.services`.
-
+| Documento | Contenido |
+|-----------|-----------|
+| [`doc/API.md`](doc/API.md) | Contrato completo de endpoints: body, respuestas, status y errores |
+| [`doc/DATABASE.md`](doc/DATABASE.md) | Esquema de BD narrado y diagrama de relaciones |
+| [`doc/especificacion-bd.xlsx`](doc/especificacion-bd.xlsx) | Especificación de BD campo por campo (Excel) |
+| [`doc/MANTENIMIENTO.md`](doc/MANTENIMIENTO.md) | Manual: cómo corregir, depurar y añadir un endpoint |
+| [`doc/schema_create.sql`](doc/schema_create.sql) | DDL autoritativo del esquema |
+| [`CLAUDE.md`](CLAUDE.md) | Guía técnica de arquitectura y convenciones |
+| [`DEPLOY.md`](DEPLOY.md) | Runbook de despliegue (OCI / Docker) |
+| `doc/collections/` | Colecciones Bruno (entornos Local / Prod) para probar la API |
