@@ -7,6 +7,7 @@ from flask import request, current_app
 from werkzeug.utils import secure_filename
 
 from app.errors import api_error, api_success
+from app.extensions import limiter
 from app.auth.jwt_utils import require_auth, require_role, current_user_id, current_user_email, current_user_fullname
 from app.models import UserAudit
 from app.reports import reports_bp as report
@@ -286,8 +287,10 @@ def academic_period_delete(period_code):
 # ✅ STUDENT SEARCH BY IDENTIFICATION
 #
 ###
+# Endpoint público por decisión de producto: el rate limit mitiga la
+# enumeración de cédulas y el scraping de PII (mismo patrón que /exports/pdf).
 @report.route("/students/<string:identification>", methods=['GET'])
-@require_role('Admin', 'Editor', 'Viewer')
+@limiter.limit("30 per minute")
 def student_search(identification):
     period_filter = request.args.get('period')
     result = get_student_data_from_db(identification, period_filter=period_filter)
